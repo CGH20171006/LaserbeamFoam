@@ -2,11 +2,11 @@ surfaceScalarField muEff(
     "muEff",
     threePhaseProperties.muf() + fvc::interpolate(rho * turbulence->nut()));
 
-pVap = min(max((T-(TVap-(TSmooth/2.0)))/TSmooth,0.0),1.0)*0.54 * p0 * Foam::exp(Hv*Mm*((T-TVap)/(R*T*TVap)));
+pVap = damperCoeff * min(max((T-(TVap-(TSmooth/2.0)))/TSmooth,0.0),1.0)*0.54 * p0 * Foam::exp(Hv*Mm*((T-TVap)/(R*T*TVap))); // Apply damperCoeff to recoil pressure only
 
 dimensionedScalar deltaN = 1e-8/pow(average(mesh.V()), 1.0/3.0);
 volVectorField N (fvc::grad(alphaM)/(mag(fvc::grad(alphaM)) + deltaN));
-volScalarField damper (2.0 * rho /(rhoM+rhoG) ); //To account for high density difference
+volScalarField damper (2.0 * rho /(rhoM+rhoG) ); // To account for high density difference (not affected by damperCoeff)
 A = -1.0 * C * alphaM * (Foam::pow(scalar(1)-gT,2))/(Foam::pow(gT,3)+SMALL);
 
 MRF.correctBoundaryVelocity(U);

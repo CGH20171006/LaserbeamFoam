@@ -39,6 +39,12 @@ laserRadius 35e-6;
 
 N_sub_divisions	1;
 
+// Laser absorptivity coefficient (effective absorption)
+// This coefficient multiplies the nominal laser power to account for
+// material absorption, surface conditions, and other energy coupling effects
+// Typical range: 0.5 - 3.0
+absorptivity           3.0;
+
 wavelength	1.064e-6;
 e_num_density	5.83e29;
 Radius_Flavour	2.0;

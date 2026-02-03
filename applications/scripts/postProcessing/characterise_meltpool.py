@@ -95,19 +95,65 @@ Authors
 '''
 
 import os
+import shlex
+import shutil
+import subprocess
 import sys
 
 sys.path.insert(0, os.getcwd())
 
-from functions import terminal, calculate_geometry_full_meltpool, plotResults
+from functions import calculate_geometry_full_meltpool, plotResults
 from input_data import *
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-terminal(
-    f'bash -c "source {OF_LOCATION} && pvpython {os.path.join(SCRIPT_DIR, "extract_meltpool.py")}"'
-)
+def _cleanup_outputs(keep_meltpool: bool = False) -> None:
+    for name in [
+        "meltpool.csv",
+        "meltpool_slice_xmid.csv",
+        "cross_sections_statistics.csv",
+        "row_statistics.csv",
+        "metrics_summary.xlsx",
+        "metrics_summary.csv",
+        "continuous.joblib",
+    ]:
+        if keep_meltpool and name in ("meltpool.csv", "meltpool_slice_xmid.csv"):
+            continue
+        if os.path.exists(name):
+            os.remove(name)
+    if os.path.isdir("results_plots"):
+        for fname in os.listdir("results_plots"):
+            if fname.endswith(".png"):
+                os.remove(os.path.join("results_plots", fname))
+
+
+def _run_pvpython(script_path: str) -> None:
+    pvpython = os.environ.get("PVPYTHON", "pvpython")
+    pv_cmd = f"{shlex.quote(pvpython)} {shlex.quote(script_path)}"
+    runner = os.environ.get("POSTPROC_RUNNER") or os.environ.get("FOAM_RUNNER")
+    if runner:
+        script = f"set -e\n{pv_cmd}\n"
+        subprocess.run(runner, shell=True, check=True, text=True, input=script)
+        return
+    of_location = os.environ.get("OF_LOCATION")
+    if of_location is None:
+        of_location = OF_LOCATION if "OF_LOCATION" in globals() else ""
+    if of_location:
+        if os.path.exists(of_location):
+            bash_cmd = f"source {shlex.quote(of_location)} && {pv_cmd}"
+            subprocess.run(["bash", "-lc", bash_cmd], check=True)
+            return
+        print(f"[warn] OF_LOCATION not found: {of_location}; running pvpython without sourcing")
+    subprocess.run(pv_cmd, shell=True, check=True)
+
+
+skip_pvpython = os.environ.get("SKIP_PVPYTHON") == "1"
+_cleanup_outputs(keep_meltpool=skip_pvpython)
+if not skip_pvpython:
+    _run_pvpython(os.path.join(SCRIPT_DIR, "extract_meltpool.py"))
+elif not os.path.exists("./meltpool.csv"):
+    raise RuntimeError("SKIP_PVPYTHON=1 but meltpool.csv is missing")
 calculate_geometry_full_meltpool(CSV_3D = "./meltpool.csv")
 
 # Plot regardless of continuity; require metrics CSV only
@@ -119,6 +165,10 @@ else:
 # Always try to produce a slice preview if available
 from functions import plot_slice_preview
 plot_slice_preview(slice_csv="meltpool_slice_xmid.csv", output_png="SlicePreview.png")
-terminal("mkdir -p results_plots && mv *.png results_plots")
+png_files = [f for f in os.listdir(".") if f.endswith(".png") and os.path.isfile(f)]
+if png_files:
+    os.makedirs("results_plots", exist_ok=True)
+    for fname in png_files:
+        shutil.move(fname, os.path.join("results_plots", fname))
 
 print("Geometry measurement finished.")

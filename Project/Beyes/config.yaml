@@ -1,19 +1,28 @@
 # 案例根目录，默认当前目录
 case_dir: .
-# OpenFOAM 环境脚本（等价于 bashrc）
-foam_bashrc: /usr/lib/openfoam/openfoam2506/etc/bashrc
+# OpenFOAM 环境脚本（容器内路径，of2506 已自动加载，可设为 null）
+foam_bashrc: null
+# 执行 OpenFOAM 命令需要先进入的外部命令
+foam_runner: of2506
 # 后处理 Python 解释器路径
 postproc_python: python
+# 后处理所需的外部命令（若宿主机可直接运行 pvpython，则设为 null）
+postproc_runner: null
+# pvpython 可执行文件路径（默认使用 PATH 中的 pvpython）
+pvpython: pvpython
 # 后处理脚本路径
-postproc_script: /home/cgh/LaserbeamFoam/applications/scripts/postProcessing/characterise_meltpool.py
+postproc_script: ../../applications/scripts/postProcessing/characterise_meltpool.py
 # 实验数据 CSV，默认相对 case_dir
 experimental_data: experimental_data.csv
 # 总迭代次数
-iters: 8
+iters: 100
 # 初始随机样本数
 n_initial: 3
 # mpirun 并行核数
 n_proc: 12
+# mpirun 额外 flags
+mpirun_flags:
+  - --oversubscribe
 # 随机种子
 seed: 42
 # LCB 探索/开发系数

@@ -1,0 +1,2 @@
+job_id,sigma,Marangoni_Constant,substrate_temp,absorptivity,progress,partial_nrmse,timestamp,width_um_140W,depth_um_140W,area_um2_140W,width_um_170W,depth_um_170W,area_um2_170W
+21,1.0,-0.0008,800.0,3.0,2/5,114.6765278906015,2026/01/31 09:29,149.45652173913044,130.86956521734132,15611.956521739132,0.0,0.0,0.0

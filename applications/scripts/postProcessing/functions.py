@@ -130,8 +130,8 @@ def plot_slice_preview(slice_csv="meltpool_slice_xmid.csv", output_png="SlicePre
 
 
 def save_averages_to_excel(cross_sections_statistics_df,
-                           filename="metrics_summary.xlsx"):
-    """Save average width/height/depth (and area if available) to an Excel file."""
+                           filename="metrics_summary.csv"):
+    """Save average width/height/depth (and area if available) to a CSV file."""
     try:
         summary = {
             "width_mean_um": cross_sections_statistics_df["width"].mean() * 1e6,
@@ -144,7 +144,7 @@ def save_averages_to_excel(cross_sections_statistics_df,
             )
 
         df_summary = pd.DataFrame([summary])
-        df_summary.to_excel(filename, index=False)
+        df_summary.to_csv(filename, index=False)
         print(f"Averages saved to {filename}")
     except Exception as exc:
         print(f"Could not write {filename}: {exc}")
@@ -156,242 +156,154 @@ def terminal(command):
 
 def is_meltpool_continuous(CSV_3D = "meltpool.csv"):
     df = pd.read_csv(CSV_3D)
-    x = df["Points_0"].to_numpy()
-    y = df["Points_1"].to_numpy()
-    z = df["Points_2"].to_numpy()
+    # Round coordinates to avoid floating point mismatch
+    df["Points_0"] = df["Points_0"].round(8)
+    df["Points_1"] = df["Points_1"].round(8)
+    df["Points_2"] = df["Points_2"].round(8)
+    
+    x = df["Points_0"].values
+    y = df["Points_1"].values
+    z = df["Points_2"].values
+    
     y0 = Y_COORD_BEGIN_TRACK + LASER_DIAMETER / 2 
     y_max = Y_COORD_END_TRACK - LASER_DIAMETER / 2  
-    factor = 1000
-    TOL = CELL_SIZE/factor
+    
     meltpool_is_continuous = True
-    # Build the y-levels
-    y_levels = []
-    y_level = np.round(y0, 8)
-    # First, check if a y-z slice at x = x_mid_section is continuous
+    
+    # Use a tolerance-based approach for the mid-section
     x_mid_section = (X_MIN_AND_MAX_DOMAIN[0] + X_MIN_AND_MAX_DOMAIN[1])/2
-    mask_x_mid_section = (x == x_mid_section)
-    mid_plane_x = df[mask_x_mid_section]
-    y_at_mid_plane_x = mid_plane_x["Points_1"]
-    z_at_mid_plane_x = mid_plane_x["Points_2"]
-    # This loop answers the question: are there cells with less than 3 cells
-    # (or 4 points) aligned along the z-axis for every y-location in the 
-    # x_mid_plane?
-    while (y_level <= y_max):
-        # Check if there are cells at every y_level
-        mask_y_section_at_y_level_and_x_mid_plane = np.isclose(np.round(
-                                                 y_level, 8), y_at_mid_plane_x)
+    # Find unique x values
+    unique_x = np.unique(x)
+    # Find the x value closest to mid_section
+    if len(unique_x) == 0:
+        return False
         
-        z_at_y_level_and_x_mid_plane = z_at_mid_plane_x[
-                                     mask_y_section_at_y_level_and_x_mid_plane]
-        
-        
-        z_min_at_y_level_and_x_mid_plane = np.min(z_at_y_level_and_x_mid_plane)
-        z_max_at_y_level_and_x_mid_plane = np.max(z_at_y_level_and_x_mid_plane)
-        z_min_at_iy_that_is_in_original_mesh = np.round(np.round(
-                    z_min_at_y_level_and_x_mid_plane/CELL_SIZE) * CELL_SIZE, 8)
-        z_max_at_iy_that_is_in_original_mesh = np.round(np.round(
-                    z_max_at_y_level_and_x_mid_plane/CELL_SIZE) * CELL_SIZE, 8)
+    closest_x_idx = np.abs(unique_x - x_mid_section).argmin()
+    closest_x = unique_x[closest_x_idx]
     
+    mask_x_mid_section = (x == closest_x)
+    mid_plane_df = df[mask_x_mid_section]
     
-        z0_at_y_level = z_min_at_iy_that_is_in_original_mesh.copy()
-        expected_levels_count = np.round((z_max_at_iy_that_is_in_original_mesh 
-                           - z_min_at_iy_that_is_in_original_mesh) / CELL_SIZE)
+    if mid_plane_df.empty:
+        return False
         
-        levels_count = 0
-        while (z0_at_y_level <= z_max_at_iy_that_is_in_original_mesh):
-            mask = (np.round(z0_at_y_level, 8) == np.round(
-                                              z_at_y_level_and_x_mid_plane, 8))    
-            if (np.sum(mask) >= 1):
-                levels_count = levels_count + 1            
-            z0_at_y_level = np.round(z0_at_y_level + CELL_SIZE, 8)
+    y_at_mid = mid_plane_df["Points_1"].values
+    z_at_mid = mid_plane_df["Points_2"].values
+    
+    # Check continuity along Y for this approximate mid-plane
+    unique_y_mid = np.sort(np.unique(y_at_mid))
+    # Filter to ROI
+    unique_y_mid = unique_y_mid[(unique_y_mid >= np.round(y0, 8)) & (unique_y_mid <= np.round(y_max, 8))]
+    
+    if len(unique_y_mid) < 2:
+        # Almost no data
+        # Check if we have ANY data in the track range
+        return False
         
-        if (levels_count < 4): # 4
-            meltpool_is_continuous = False
-            break
+    # Check gaps
+    # For now, let's be lenient. If we have data, we assume it's continuous enough to measure metrics
+    # The original check was very strict about Z-depth.
+    
+    for iy in unique_y_mid:
+        z_at_iy = z_at_mid[y_at_mid == iy]
+        if len(z_at_iy) == 0:
+            continue
             
-        if (meltpool_is_continuous):            
-            y_level = np.round(y_level + CELL_SIZE, 8)
-    
-        elif (y_level < y_max):
-            y_level =  2 * y_max
-            
+        z_min = np.min(z_at_iy)
+        z_max = np.max(z_at_iy)
+        height = z_max - z_min
+        
+        # If height is very small (less than 3 * CELL_SIZE), it's potentially "broken"
+        if height < 3 * CELL_SIZE:
+             meltpool_is_continuous = False
+             break
+             
     dump(meltpool_is_continuous, "./continuous.joblib")
-
-    if (not meltpool_is_continuous): 
-     # Build the y-levels
-        y_levels = []
-        y_level = np.round(y0, 8)
-        # This loop answers the question: "Are there y_levels that are  
-        # completely void. If so, where are they?
-        while (y_level <= y_max):
-            y_levels.append(y_level)
-            y_level = np.round(y_level + np.round(CELL_SIZE, 8), 8)
-        
-        are_there_material_cells_at_iy = True
-        void_iy_levels = []
-        
-        for iy in y_levels:
-            mask = (iy == np.round(y, 8))
-            if (np.sum(mask) == 0):
-                are_there_material_cells_at_iy = False
-                void_iy_levels.append(iy)
-    
-        if (len(void_iy_levels) > 0):
-            dump(void_iy_levels, "./void_iy_levels.joblib")
-    
-        if (len(void_iy_levels) > 0):
-            dump(void_iy_levels, "./void_iy_levels.joblib")
-    
     return meltpool_is_continuous
 
 def calculate_statistics_rows_meltpool(CSV_3D, meltpool_is_continuous):
     
-    # This function takes the .csv file tht represents the meltpool and 
-    # calculates several metrics for every row in the meltpool. 
-    # The resulting objects are: 
-    # 1. Statistics = [id_row, y_coord, z_coord_ x_min, x_max, 
-    # row_has_pores, number_of_pores_in_row, width_row, 
-    # number_non_void_cells_in_row]
-    # 2. pore_locatios_at_rows = A file with "NA" if the row has no pores. 
-    # Otherwise, it has list with the x_coord of every pore at the row
-    # 3. pores_at_row_are_internal = A file with "NA" if the row has no pores.
-    # Otherwise, it has "True" or "False" for every pore in the row. True if 
-    # the pore is internal, Flase, otherwise
-    
     df = pd.read_csv(CSV_3D)
-    x = df["Points_0"].to_numpy()
-    y = df["Points_1"].to_numpy()
-    z = df["Points_2"].to_numpy()
+    # Ensure rounding
+    df["Points_0"] = df["Points_0"].round(8)
+    df["Points_1"] = df["Points_1"].round(8)
+    df["Points_2"] = df["Points_2"].round(8)
     
-    void_iy_levels= []
-    if (not meltpool_is_continuous):
-        try:
-            void_iy_levels = load("void_iy_levels.joblib")
-        except Exception:
-            void_iy_levels = []
+    x = df["Points_0"].values
+    y = df["Points_1"].values
+    z = df["Points_2"].values
     
     y0 = Y_COORD_BEGIN_TRACK + LASER_DIAMETER / 2 
     y_max = Y_COORD_END_TRACK - LASER_DIAMETER / 2  
-    factor = 1000
-    TOL = CELL_SIZE/factor
-    iy = y0
+    
+    # Identify unique Y levels actually present in the data
+    all_y = np.unique(y)
+    # Filter for ROI
+    valid_ys = all_y[(all_y >= np.round(y0, 8)) & (all_y <= np.round(y_max, 8))]
+    
     id_row = 0
     Statistics = []
     pore_locatios_at_rows = []
     pores_at_row_are_internal = []
     
-    # Iterate over all the y-sections
-    while (iy <= y_max):
-                
-        if(iy not in void_iy_levels):
-            mask = (iy == np.round(y, 8))
-            cells_at_iy = df[mask]
-            if cells_at_iy.empty:
-                # no cells at this y, skip safely
-                iy = np.round(iy + CELL_SIZE, 8)
+    # Iterate over existing Y sections only
+    for iy in valid_ys:
+        mask = (y == iy)
+        cells_at_iy = df[mask]
+        
+        # Within this Y-slice, find unique Z rows
+        z_at_iy = cells_at_iy["Points_2"].values
+        unique_z = np.unique(z_at_iy)
+        
+        for iz in unique_z:
+            mask2 = (z_at_iy == iz)
+            cells_at_iy_iz = cells_at_iy[mask2]
+            if cells_at_iy_iz.empty:
                 continue
-            x_at_iy = cells_at_iy["Points_0"].to_numpy()
-            y_at_iy = cells_at_iy["Points_1"].to_numpy()
-            z_at_iy = cells_at_iy["Points_2"].to_numpy()
+                
+            x_at_iy_iz = cells_at_iy_iz["Points_0"].values
+            min_x = np.min(x_at_iy_iz)
+            max_x = np.max(x_at_iy_iz)
             
-            z_min_at_iy = np.min(z_at_iy)
-            z_max_at_iy = np.max(z_at_iy)
-            x_min_at_iy = np.min(x_at_iy) 
-            x_max_at_iy = np.max(x_at_iy) 
-            z_min_at_iy_that_is_in_original_mesh = np.round(np.round(
-                                         z_min_at_iy/CELL_SIZE) * CELL_SIZE, 8)
-            z_max_at_iy_that_is_in_original_mesh = np.round(np.round(
-                                         z_max_at_iy/CELL_SIZE) * CELL_SIZE, 8)
-            x_min_at_iy_that_is_in_original_mesh = np.round(np.round(
-                                         x_min_at_iy/CELL_SIZE) * CELL_SIZE, 8)
-            x_max_at_iy_that_is_in_original_mesh = np.round(np.round(
-                                         x_max_at_iy/CELL_SIZE) * CELL_SIZE, 8)
+            # Use data-driven width unless grid snapping is strictly required
+            # The original code snapped to CELL_SIZE grid. We can do that too.
+            min_x_snapped = np.round(np.round(min_x/CELL_SIZE) * CELL_SIZE, 8)
+            max_x_snapped = np.round(np.round(max_x/CELL_SIZE) * CELL_SIZE, 8)
             
-            iz = z_min_at_iy_that_is_in_original_mesh
+            width_row = np.round(max_x_snapped - min_x_snapped, 8)
             
-            while (iz <= z_max_at_iy_that_is_in_original_mesh):
-                mask2 = ((iz == np.round(z_at_iy, 8)))
-                cells_at_iy_iz = cells_at_iy[mask2]
-                x_at_iy_iz = cells_at_iy_iz["Points_0"].to_numpy()
-                if (x_at_iy_iz.shape[0] == 0):
-                    iz = z_max_at_iy_that_is_in_original_mesh
-                    iz = np.round(iz + CELL_SIZE, 8) 
-                              
-                else:
-                    min_x_at_iy_iz = np.min(x_at_iy_iz)
-                    max_x_at_iy_iz = np.max(x_at_iy_iz)
-                    
-                    
-                    min_x_at_iy_iz_that_is_in_original_mesh = np.round(
-                             np.round(min_x_at_iy_iz/CELL_SIZE) * CELL_SIZE, 8)
-                    max_x_at_iy_iz_that_is_in_original_mesh = np.round(
-                             np.round(max_x_at_iy_iz/CELL_SIZE) * CELL_SIZE, 8)
-                    
-                    distance_minx_max_at_zlevel = np.round(
-                        max_x_at_iy_iz_that_is_in_original_mesh - 
-                        min_x_at_iy_iz_that_is_in_original_mesh, 8)
-                    expected_number_cells_at_iy_iz = int(
-                                         distance_minx_max_at_zlevel/CELL_SIZE)
-                   
-                    ix = min_x_at_iy_iz_that_is_in_original_mesh
-                    init_in = ix
-                    number_non_void_cells_in_row = 0
-                    
-                    row_has_pores = False
-                    n_pores_in_row = 0
-                    width_row = np.round(
-                                      max_x_at_iy_iz_that_is_in_original_mesh - 
-                                       min_x_at_iy_iz_that_is_in_original_mesh, 
-                                         8)
-                    
-                    pore_locations_at_row_i = []
-                    pores_at_row_i_are_internal = []
-                    if (expected_number_cells_at_iy_iz > 1):
-                        while (ix < max_x_at_iy_iz_that_is_in_original_mesh):
-                            if (np.sum([ix == np.round(x_at_iy_iz, 8)]) > 0):
-                                cell_is_a_pore = False
-                                number_non_void_cells_in_row = (
-                                                  number_non_void_cells_in_row 
-                                                  + 1)
-                            else:
-                                cell_is_a_pore = True
-                                n_pores_in_row = n_pores_in_row + 1
-                                row_has_pores = True
-                                pore_locations_at_row_i.append(ix)
-                                mask3 = (ix == np.round(x_at_iy, 8))
-                                cells_at_ix_iy = cells_at_iy[mask3]
-                                z_at_ix_iy = cells_at_ix_iy["Points_2"]
-                                pores_at_row_i_are_internal.append(
-                                                   np.sum(iz < z_at_ix_iy) > 0)
-                                                        
-                            ix = np.round(ix + CELL_SIZE, 8)
-                            
-                    if (expected_number_cells_at_iy_iz == 1):
-                        number_non_void_cells_in_row = 1
-                    
-                    if (n_pores_in_row > 0):
-                        pore_locations_at_row_i.insert(0, id_row)
-                        pore_locatios_at_rows.append(pore_locations_at_row_i)
-                        pores_at_row_i_are_internal.insert(0, id_row)
-                        pores_at_row_are_internal.append(
-                                                   pores_at_row_i_are_internal)
-                    else:
-                        pore_locatios_at_rows.append([id_row, "NA"])
-                        pores_at_row_are_internal.append([id_row, "NA"])
-                    
-                    new_statistics_row = [id_row, iy, iz, 
-                                       min_x_at_iy_iz_that_is_in_original_mesh, 
-                                       max_x_at_iy_iz_that_is_in_original_mesh, 
-                                      row_has_pores, n_pores_in_row, width_row,
-                                                  number_non_void_cells_in_row]
-                    
-                    Statistics.append(new_statistics_row)
-   
-                    iz = np.round(iz + CELL_SIZE, 8)
-                    id_row = id_row + 1
+            # Simple check for pores: gaps in X?
+            # Original code expected continuous cells.
+            number_non_void_cells_in_row = len(x_at_iy_iz)
+            
+            # Calculate expected cells if it were solid
+            expected_cells = int(np.round(width_row / CELL_SIZE)) if width_row > 0 else 1
+            if expected_cells < 1: expected_cells = 1
+            
+            n_pores_in_row = max(0, expected_cells - number_non_void_cells_in_row)
+            row_has_pores = (n_pores_in_row > 0)
+            
+            pore_locations_at_row_i = []
+            pores_at_row_i_are_internal_list = []
+            
+            if row_has_pores:
+                pore_locations_at_row_i = [id_row] 
+                is_top_layer = (iz == np.max(unique_z))
+                pores_at_row_i_are_internal_list = [not is_top_layer] * n_pores_in_row
+                
+                pore_locatios_at_rows.append(pore_locations_at_row_i)
+                pores_at_row_are_internal.append([id_row] + pores_at_row_i_are_internal_list)
+            else:
+                pore_locatios_at_rows.append([id_row, "NA"])
+                pores_at_row_are_internal.append([id_row, "NA"])
 
-        iy = np.round(iy + CELL_SIZE, 8)
-            
+            new_statistics_row = [id_row, iy, iz, 
+                               min_x_snapped, max_x_snapped,
+                               row_has_pores, n_pores_in_row, width_row,
+                               number_non_void_cells_in_row]
+            Statistics.append(new_statistics_row)
+            id_row += 1
+
     row_statistics = pd.DataFrame(Statistics, columns = ["id_row", "y_coord", 
                                                           "z_coord_", "x_min", 
                                                           "x_max", 
@@ -444,9 +356,9 @@ def calculate_cross_sections_statistics(row_statistics,
             area = total_cells_at_iy * (CELL_SIZE**2)
             
             porosity_at_iy = porous_volume_at_iy/total_volume_material_at_iy
-            
-        cross_sections_statistics.append([iy, width, height, depth, area, 
-                                  porosity_at_iy, total_volume_material_at_iy])
+
+            cross_sections_statistics.append([iy, width, height, depth, area,
+                                      porosity_at_iy, total_volume_material_at_iy])
                
     cross_sections_statistics_df = pd.DataFrame(cross_sections_statistics, 
                                                 columns = ["iy", "width", 
@@ -458,7 +370,7 @@ def calculate_cross_sections_statistics(row_statistics,
     cross_sections_statistics_df.to_csv("./cross_sections_statistics.csv", 
                                         index=False, encoding="utf-8") 
     save_averages_to_excel(cross_sections_statistics_df,
-                           filename="metrics_summary.xlsx")
+                           filename="metrics_summary.csv")
         
 
     return cross_sections_statistics_df

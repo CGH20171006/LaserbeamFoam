@@ -1,0 +1,32 @@
+# OpenFOAM generated files
+0/
+!0.orig/
+constant/polyMesh/
+processor*/
+postProcessing/
+VTKs/
+*.foam
+
+# Python temporary files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Calibration Output
+runs/
+*_optimization/
+archive_debug/
+*.joblib
+*.log
+log.*
+
+# Large CSVs (Intermediate results)
+cross_sections_statistics.csv
+row_statistics.csv
+metrics_summary.csv
+
+# Editors
+.vscode/
+.idea/
+*.swp

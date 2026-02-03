@@ -1,0 +1,5 @@
+compactRay.C
+laserHeatSource.C
+
+
+LIB = $(FOAM_USER_LIBBIN)/liblaserHeatSource

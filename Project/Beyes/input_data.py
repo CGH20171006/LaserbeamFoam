@@ -30,8 +30,8 @@ Authors
 
 LASER_DIAMETER = 70e-6 # In meters
 OF_LOCATION = "/usr/lib/openfoam/openfoam2506/etc/bashrc"
-CELL_SIZE = 5e-06
+CELL_SIZE = 5e-06  # 5μm - 恢复原始网格分辨率
 X_MIN_AND_MAX_DOMAIN = [0, 0.0003]
-Y_COORD_BEGIN_TRACK = 200e-6
-Y_COORD_END_TRACK = 500e-6
+Y_COORD_BEGIN_TRACK = 100e-6  # 降低起始位置，匹配实际点云范围
+Y_COORD_END_TRACK = 350e-6    # 调整结束位置
 PLOT_GEOMETRY_VS_Y_LOCATION = True

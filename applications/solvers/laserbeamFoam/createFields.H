@@ -533,6 +533,14 @@ volScalarField Qv
 );
 
 
+// Read damper coefficient from transportProperties
+const dimensionedScalar damperCoeff
+(
+    "damper",
+    dimless,
+    transportProperties
+);
+
 volScalarField damper
 (
     IOobject
@@ -544,7 +552,7 @@ volScalarField damper
         IOobject::NO_WRITE
     ),
     mesh,
-    dimensionedScalar("damper", dimless, 1.0),
+    damperCoeff,
     zeroGradientFvPatchScalarField::typeName
 );
 
