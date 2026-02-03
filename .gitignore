@@ -81,4 +81,60 @@ solaris*Gcc*/
 SunOS*Gcc*/
 
 *.joblib
-__pycache__
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+
+# Project Management
+backup/
+.claude/
+claude.md
+启动Claude工具.bat
+
+# Project Directory Exclusions
+Project/*
+!Project/AutoCalibrateParameter/
+
+# Ignore runs folders specifically within cases (or anywhere)
+**/runs/
+Project/AutoCalibrateParameter/archive_debug/
+
+# Project Specific - Simulation Outputs
+results_plots/
+results_plots_archive/
+meltpool_calibration_known_error.out/
+.postproc_smoketest/
+
+# Project Specific - Generated Data/Logs
+meltpool.csv
+meltpool_slice_xmid.csv
+row_statistics.csv
+cross_sections_statistics.csv
+metrics_summary.xlsx
+bayes_history.csv
+bayes_power_metrics.csv
+
+# Binary Data
+*.joblib

@@ -1,3 +1,0 @@
-compressibleLaserbeamFoam.C
-
-EXE = $(FOAM_USER_APPBIN)/compressibleLaserbeamFoam

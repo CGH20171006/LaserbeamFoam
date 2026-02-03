@@ -1,3 +1,0 @@
-laserMeltFoam.C
-liquidFractionFunctions.C
-EXE = $(FOAM_USER_APPBIN)/laserMeltFoam
