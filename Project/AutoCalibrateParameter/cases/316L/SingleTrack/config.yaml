@@ -1,0 +1,60 @@
+# 案例根目录，设为当前目录（因为 constant/initial/system 在这里）
+case_dir: .
+
+# OpenFOAM 环境脚本（of2506 已自动加载）
+foam_bashrc: null
+
+# 执行 OpenFOAM 命令需要先进入的外部命令
+foam_runner: of2506
+
+# 后处理 Python 解释器路径
+postproc_python: python
+
+# 后处理所需的外部命令
+postproc_runner: null
+
+# pvpython 可执行文件路径
+pvpython: pvpython
+
+# 后处理脚本路径（使用相对路径）
+postproc_script: ../../applications/scripts/postProcessing/characterise_meltpool.py
+
+# 实验数据 CSV 文件名
+exp_csv: SingleTrackExperimentalData.csv
+
+# 输出权重配置 [width, depth, area]
+# 设为0表示不校准该输出（例如area=0表示不校准面积）
+output_weights: [1.0, 1.0, 0.0]
+
+# 参数选择性优化配置（可选）
+# 如果要优化所有参数，可以注释掉或设为null
+active_params:
+  - sigma
+  - marangoni
+  - damper
+
+# 固定参数值（可选）
+# 对于不在active_params中的参数，可以在这里指定固定值
+# 如果未指定，将使用参数边界的中点值
+fixed_values:
+  substrate_temp: 300.0
+  absorptivity: 1.0
+
+# 贝叶斯优化参数
+n_initial_points: 10
+n_batches: 20
+batch_size: 1
+acq_func: EI
+
+# mpirun 并行核数
+n_proc: 24
+
+# mpirun 额外 flags
+mpirun_flags:
+  - --oversubscribe
+
+# 随机种子
+seed: 42
+
+# 历史记录文件（可选，用于热启动）
+warmstart_csv: bayes_history.csv
