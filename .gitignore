@@ -113,6 +113,8 @@ Project/*
 # Ignore runs folders specifically within cases (or anywhere)
 **/runs/
 Project/AutoCalibrateParameter/archive_debug/
+# Project/AutoCalibrateParameter/tests/  <-- Explicitly allowed now
+
 
 # Project Specific - Simulation Outputs
 results_plots/
