@@ -25,7 +25,7 @@ class OptimizationResult:
     method : str
         优化方法名称 ("ACBICI", "Bayesian", "Gradient")
     best_params : np.ndarray
-        最优参数 [sigma, marangoni, substrate_temp, absorptivity]
+        最优参数 [sigma, marangoni, substrate_temp, absorptivity, recoilCoeff, radius_flavour]
     best_cost : float
         最优目标函数值 (SSE)
     n_evaluations : int

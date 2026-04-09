@@ -1,6 +1,9 @@
 # 案例根目录，设为当前目录（因为 constant/initial/system 在这里）
 case_dir: .
 
+# 结果输出目录（相对于当前目录）
+runs_root: ./runs
+
 # OpenFOAM 环境脚本（of2506 已自动加载）
 foam_bashrc: null
 
@@ -17,7 +20,7 @@ postproc_runner: null
 pvpython: pvpython
 
 # 后处理脚本路径（使用相对路径）
-postproc_script: ../../applications/scripts/postProcessing/characterise_meltpool.py
+postproc_script: ../../../../../applications/scripts/postProcessing/characterise_meltpool.py
 
 # 实验数据 CSV 文件名
 exp_csv: SingleTrackExperimentalData.csv
@@ -26,12 +29,23 @@ exp_csv: SingleTrackExperimentalData.csv
 # 设为0表示不校准该输出（例如area=0表示不校准面积）
 output_weights: [1.0, 1.0, 0.0]
 
+# 参数边界（直接控制优化搜索范围）
+sigma_bounds: [1.5, 4.0]
+marangoni_bounds: [-2.5e-3, -4.0e-6]
+substrate_temp_bounds: [300.0, 800.0]
+absorptivity_bounds: [0.5, 2.0]
+recoilCoeff_bounds: [0.5, 3.0]
+radius_flavour_bounds: [1.5, 4.0]
+laser_radius_bounds: [30.0e-6, 70.0e-6]
+
 # 参数选择性优化配置（可选）
 # 如果要优化所有参数，可以注释掉或设为null
 active_params:
   - sigma
   - marangoni
-  - damper
+  - recoilCoeff
+  - radius_flavour
+  - laser_radius
 
 # 固定参数值（可选）
 # 对于不在active_params中的参数，可以在这里指定固定值
@@ -41,7 +55,7 @@ fixed_values:
   absorptivity: 1.0
 
 # 贝叶斯优化参数
-n_initial_points: 10
+n_initial_points: 20
 n_batches: 20
 batch_size: 1
 acq_func: EI
@@ -55,6 +69,14 @@ mpirun_flags:
 
 # 随机种子
 seed: 42
+
+# 后处理几何参数
+laser_diameter: 70e-6        # 激光直径 (m)
+cell_size: 1e-6              # 网格单元尺寸 (m)
+x_domain: [0, 0.0003]        # 计算域 X 方向范围 (m)
+y_begin_track: 150e-6        # 轨迹分析起始 Y 坐标 (m)
+y_end_track: 300e-6          # 轨迹分析结束 Y 坐标 (m)
+plot_geometry: true           # 是否生成后处理图表
 
 # 历史记录文件（可选，用于热启动）
 warmstart_csv: bayes_history.csv

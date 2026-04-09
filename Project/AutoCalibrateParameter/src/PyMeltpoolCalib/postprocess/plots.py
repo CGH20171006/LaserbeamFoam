@@ -27,7 +27,7 @@ def setup_plot_style() -> None:
 def save_figure(
     fig: plt.Figure,
     filepath: Path,
-    formats: List[str] = ["png", "pdf"],
+    formats: List[str] = ["png"],
     dpi: int = 150,
 ) -> None:
     """

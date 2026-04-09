@@ -363,13 +363,15 @@ def run_gradient(config, exp_data: np.ndarray, verbose: bool = False):
 def print_result(result, param_names: list = None):
     """打印优化结果"""
     if param_names is None:
-        param_names = ["sigma", "marangoni", "substrate_temp", "absorptivity"]
+        from PyMeltpoolCalib.utils import get_param_names
+
+        param_names = get_param_names()
 
     print("\n" + "=" * 60)
     print("优化结果")
     print("=" * 60)
     print(f"方法: {result.method}")
-    print(f"最优 SSE: {result.best_cost:.6e}")
+    print(f"最优目标值: {result.best_cost:.6e}")
     print(f"总评估次数: {result.n_evaluations}")
     print(f"消息: {result.message}")
     print()
@@ -418,11 +420,14 @@ def main():
         sys.exit(1)
 
     # 创建输出目录
-    # 创建输出目录
-    # 改为固定名称以避免时间戳文件夹，方便断点续传
-    # output_dir = config.build_runs_path(args.method)
-    folder_name = f"{args.method}_optimization"
-    output_dir = config.runs_root / folder_name
+    # 直接使用 runs_root，不再自动追加 "{method}_optimization" 子目录
+    output_dir = config.runs_root
+
+    # 兼容旧配置：若 runs_root 已是类似 ".../bayes_optimization"，自动回退到上一级 runs
+    legacy_method_dir = f"{args.method}_optimization"
+    if output_dir.name == legacy_method_dir:
+        output_dir = output_dir.parent
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # 重要：更新 config.runs_root 以确保 CSV 保存到正确位置

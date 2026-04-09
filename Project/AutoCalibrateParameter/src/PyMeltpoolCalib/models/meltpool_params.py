@@ -1,46 +1,17 @@
 """
 熔池仿真参数定义
 
-定义参数名称、标签和默认边界
+参数元数据统一来自参数注册中心（utils.param_registry）。
 """
 
 from typing import Dict, List, Tuple
 
-# 参数名称
-PARAM_NAMES: List[str] = [
-    "sigma",
-    "marangoni",
-    "substrate_temp",
-    "absorptivity",
-    "damper",
-]
-
-# 参数标签 (用于绘图)
-PARAM_LABELS: Dict[str, str] = {
-    "sigma": r"$\sigma$ (N/m)",
-    "marangoni": r"$\gamma$ (N/m·K)",
-    "substrate_temp": r"$T_s$ (K)",
-    "absorptivity": r"$\eta$",
-    "damper": r"$\alpha_{recoil}$",
-}
-
-# LaTeX 标签 (用于 ACBICI)
-PARAM_LATEX_LABELS: List[str] = [
-    r"$\sigma$",
-    r"$\gamma$",
-    r"$T_s$",
-    r"$\eta$",
-    r"$\alpha_{recoil}$",
-]
-
-# 默认参数边界
-DEFAULT_BOUNDS: Dict[str, Tuple[float, float]] = {
-    "sigma": (1.0, 2.0),
-    "marangoni": (-8e-4, -4e-6),
-    "substrate_temp": (300.0, 800.0),
-    "absorptivity": (0.5, 3.0),
-    "damper": (0.5, 2.0),
-}
+from ..utils.param_registry import (
+    DEFAULT_BOUNDS,
+    PARAM_LABELS,
+    PARAM_LATEX_LABELS,
+    PARAM_NAMES,
+)
 
 # 输出名称
 OUTPUT_NAMES: List[str] = ["width", "depth", "area"]

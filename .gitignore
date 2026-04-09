@@ -1,5 +1,9 @@
 # Test directories
 tutorialsTest
+tests/
+test/
+**/tests/
+**/test/
 
 # VTK files
 **/*.vtk
@@ -113,7 +117,7 @@ Project/*
 # Ignore runs folders specifically within cases (or anywhere)
 **/runs/
 Project/AutoCalibrateParameter/archive_debug/
-# Project/AutoCalibrateParameter/tests/  <-- Explicitly allowed now
+Project/AutoCalibrateParameter/tests/
 
 
 # Project Specific - Simulation Outputs

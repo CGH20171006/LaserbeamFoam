@@ -11,16 +11,20 @@ __version__ = "1.0.0"
 __author__ = "CGH"
 
 from .config import BaseConfig, ACBICIConfig, BayesConfig, GradientConfig
-from .optimizers import (
-    BaseOptimizer,
-    OptimizationResult,
-    ACBICIOptimizer,
-    BayesOptimizer,
-    GradientOptimizer,
-)
+from .optimizers import BaseOptimizer, OptimizationResult, BayesOptimizer, GradientOptimizer
 from .simulation import SimulationRunner
-from .models import OpenFOAMCaseManager, MeltpoolModel
+from .models import OpenFOAMCaseManager
 from .data import load_experiment_data
+
+try:
+    from .optimizers import ACBICIOptimizer
+except ImportError:
+    ACBICIOptimizer = None
+
+try:
+    from .models import MeltpoolModel
+except ImportError:
+    MeltpoolModel = None
 
 __all__ = [
     # Config
@@ -38,7 +42,11 @@ __all__ = [
     "SimulationRunner",
     # Models
     "OpenFOAMCaseManager",
-    "MeltpoolModel",
     # Data
     "load_experiment_data",
 ]
+
+if ACBICIOptimizer is not None:
+    __all__.append("ACBICIOptimizer")
+if MeltpoolModel is not None:
+    __all__.append("MeltpoolModel")

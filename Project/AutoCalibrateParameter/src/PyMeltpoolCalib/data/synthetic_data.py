@@ -24,8 +24,8 @@ def load_synthetic_data(filepath: Path) -> np.ndarray:
 
     Returns
     -------
-    np.ndarray, shape (n_samples, 8)
-        [power, sigma, marangoni, substrate_temp, absorptivity, width, depth, area]
+    np.ndarray, shape (n_samples, 9)
+        [power, sigma, marangoni, substrate_temp, absorptivity, recoilCoeff, radius_flavour, width, depth, area]
     """
     filepath = Path(filepath)
     if not filepath.exists():
@@ -39,7 +39,7 @@ def load_synthetic_data(filepath: Path) -> np.ndarray:
 def save_synthetic_data(
     filepath: Path,
     data: np.ndarray,
-    header: str = "power sigma marangoni substrate_temp absorptivity width depth area",
+    header: str = "power sigma marangoni substrate_temp absorptivity recoilCoeff radius_flavour width depth area",
 ) -> None:
     """
     保存合成数据

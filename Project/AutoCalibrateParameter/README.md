@@ -31,3 +31,7 @@ To run the calibration for 316L Single Track:
 - Python 3.8+
 - Scikit-optimize
 - NumPy, Pandas, Scipy
+
+## Collaboration
+
+For collaborators who already have a `LaserbeamFoam` source tree and need to reproduce the same solver behavior and calibration workflow, see [`COLLABORATION_SETUP.md`](/home/cgh/LaserbeamFoam/Project/AutoCalibrateParameter/COLLABORATION_SETUP.md).

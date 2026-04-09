@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict
@@ -31,7 +32,12 @@ except ImportError:
 import pandas as pd
 
 from .base_optimizer import BaseOptimizer, OptimizationResult
-from ..simulation.objective import PENALTY_VALUE
+from ..simulation.objective import compute_bayes_nrmse_percent
+from ..utils.param_registry import (
+    get_param_csv_candidates,
+    get_param_csv_column,
+    get_param_csv_column_map,
+)
 
 if TYPE_CHECKING:
     from ..config.bayes_config import BayesConfig
@@ -57,7 +63,7 @@ def _evaluate_single_point(args: Tuple) -> Tuple[int, List[float], float]:
     # 重建配置和运行器
     from ..config.bayes_config import BayesConfig
     from ..simulation.simulation_runner import SimulationRunner
-    from ..simulation.objective import compute_sse
+    from ..simulation.objective import compute_bayes_nrmse_percent
 
     config = BayesConfig(**config_dict)
     runner = SimulationRunner(config)
@@ -68,19 +74,11 @@ def _evaluate_single_point(args: Tuple) -> Tuple[int, List[float], float]:
 
     predictions = runner.run(np.array(params), power_points, job_id=job_id)
 
-    # 计算加权SSE
-    from ..simulation.objective import compute_sse
-    sse = compute_sse(predictions, observations, weights=output_weights)
-
-    # 转换为归一化RMSE百分比（保持原有输出格式）
-    n_points = len(power_points)
-    n_outputs = 3
-    rmse = np.sqrt(sse / (n_points * n_outputs))
-
-    # 归一化
-    scales = np.mean(np.abs(observations), axis=0)
-    scales_mean = np.mean(scales[scales > 1e-10]) if np.any(scales > 1e-10) else 1.0
-    cost = float(rmse / scales_mean * 100)
+    cost, _ = compute_bayes_nrmse_percent(
+        predictions,
+        observations,
+        weights=np.asarray(output_weights, dtype=float),
+    )
 
     return job_id, params, cost
 
@@ -125,6 +123,55 @@ class BayesianOptimizer(BaseOptimizer):
 
     def get_name(self) -> str:
         return "Bayesian"
+
+    def _get_history_csv_path(self) -> Path:
+        """获取唯一的 history CSV 路径（统一放在 runs_root 下）。"""
+        history_name = "bayes_history.csv"
+        if getattr(self.config, "warmstart_csv", None):
+            configured_raw = str(self.config.warmstart_csv)
+            configured_name = Path(configured_raw).name
+            if configured_raw != configured_name:
+                print(f"警告: warmstart_csv='{configured_raw}' 包含路径，已规范为文件名 '{configured_name}' 并存储到 runs_root")
+            if configured_name:
+                history_name = configured_name
+        return self.config.runs_root / history_name
+
+    def _get_progress_file_path(self, job_id: int) -> Path:
+        """获取指定 job 的进度文件路径（统一放在 runs_root 下）。"""
+        return self.config.runs_root / f"bayes_progress_job{job_id}.csv"
+
+    def _migrate_legacy_files(self) -> None:
+        """将历史遗留的 case 根目录文件迁移到 runs_root，保证只保留 runs 一份。"""
+        self.config.runs_root.mkdir(parents=True, exist_ok=True)
+
+        # 迁移 bayes_history.csv（若 runs 中不存在）
+        history_in_runs = self._get_history_csv_path()
+        legacy_history = self.config.case_dir / history_in_runs.name
+        if legacy_history.exists() and legacy_history != history_in_runs:
+            if history_in_runs.exists():
+                try:
+                    legacy_history.unlink()
+                    print(f"清理旧路径 history 文件: {legacy_history}")
+                except Exception as e:
+                    print(f"警告: 检测到旧路径 history {legacy_history}，无法删除({e})，将继续使用 {history_in_runs}")
+            else:
+                shutil.move(str(legacy_history), str(history_in_runs))
+                print(f"迁移历史文件到 runs: {history_in_runs}")
+
+        # 迁移 bayes_progress_job*.csv
+        for legacy_progress in sorted(self.config.case_dir.glob("bayes_progress_job*.csv")):
+            target_progress = self.config.runs_root / legacy_progress.name
+            if legacy_progress == target_progress:
+                continue
+            if target_progress.exists():
+                try:
+                    legacy_progress.unlink()
+                    print(f"清理旧进度文件: {legacy_progress}")
+                except Exception as e:
+                    print(f"警告: 无法清理旧进度文件 {legacy_progress}: {e}")
+            else:
+                shutil.move(str(legacy_progress), str(target_progress))
+                print(f"迁移进度文件到 runs: {target_progress}")
 
     def optimize(self, exp_data: np.ndarray) -> OptimizationResult:
         """
@@ -174,11 +221,15 @@ class BayesianOptimizer(BaseOptimizer):
         # 获取功率点用于保存 CSV
         power_points = exp_data[:, 0]
 
-        # 检查是否从 CSV 热启动
-        if cfg.warmstart_csv and Path(cfg.warmstart_csv).exists():
+        # 统一迁移历史遗留文件到 runs_root
+        self._migrate_legacy_files()
+
+        # 检查是否从 runs 下的 CSV 热启动
+        history_csv_path = self._get_history_csv_path()
+        if history_csv_path.exists():
             try:
                 # Load history and predictions
-                warmstart_x, warmstart_y, warmstart_preds = self._load_history_csv(cfg.warmstart_csv)
+                warmstart_x, warmstart_y, warmstart_preds = self._load_history_csv(str(history_csv_path))
                 if warmstart_x and warmstart_y:
                     all_x.extend(warmstart_x)
                     all_y.extend(warmstart_y)
@@ -188,20 +239,6 @@ class BayesianOptimizer(BaseOptimizer):
                     print(f"从 CSV 热启动: {len(warmstart_y)} 个样本, 最优 RMSE = {best_cost:.2f}")
             except Exception as e:
                 print(f"加载 CSV 热启动数据失败: {e}")
-        
-        # Check if bayes_history.csv exists in current directory if no warmstart_csv provided
-        elif (self.config.case_dir / "bayes_history.csv").exists():
-             try:
-                hist_path = self.config.case_dir / "bayes_history.csv"
-                warmstart_x, warmstart_y, warmstart_preds = self._load_history_csv(str(hist_path))
-                if warmstart_x and warmstart_y:
-                    all_x.extend(warmstart_x)
-                    all_y.extend(warmstart_y)
-                    all_predictions.extend(warmstart_preds)
-                    best_cost = min(all_y)
-                    print(f"从项目根目录 bayes_history.csv 热启动: {len(warmstart_y)} 个样本, 最优 RMSE = {best_cost:.2f}")
-             except Exception as e:
-                print(f"加载默认历史文件失败: {e}")
 
         # 检查是否从 history.json 恢复 (Deprecated or secondary)
         # 检查是否从 history.json 恢复 (已弃用，只使用 CSV)
@@ -236,9 +273,21 @@ class BayesianOptimizer(BaseOptimizer):
             
             clean_x = [all_x[i] for i in valid_indices]
             clean_y = [all_y[i] for i in valid_indices]
-            
-            if clean_x and clean_y:
-                optimizer.tell(clean_x, clean_y)
+
+            # Clip historical points to current bounds (handles cases where bounds were widened/narrowed)
+            bounds_list = [space_dim.bounds for space_dim in optimizer.space.dimensions]
+            clipped_x = []
+            n_clipped = 0
+            for pt in clean_x:
+                clipped_pt = [float(np.clip(v, lo, hi)) for v, (lo, hi) in zip(pt, bounds_list)]
+                if clipped_pt != list(pt):
+                    n_clipped += 1
+                clipped_x.append(clipped_pt)
+            if n_clipped > 0:
+                print(f"警告: {n_clipped} 个历史点超出新边界，已裁剪至边界")
+
+            if clipped_x and clean_y:
+                optimizer.tell(clipped_x, clean_y)
                 print(f"总历史数据: {len(clean_y)} 个有效样本")
 
         # 阶段 1: 初始采样
@@ -394,7 +443,11 @@ class BayesianOptimizer(BaseOptimizer):
         valid_indices = [i for i, y in enumerate(all_y) if not np.isnan(y)]
         clean_x = [all_x[i] for i in valid_indices]
         clean_y = [all_y[i] for i in valid_indices]
-        
+
+        # Clip to current bounds (handles cases where bounds were widened/narrowed)
+        bounds_list = [d.bounds for d in optimizer.space.dimensions]
+        clean_x = [[float(np.clip(v, lo, hi)) for v, (lo, hi) in zip(pt, bounds_list)] for pt in clean_x]
+
         if clean_x and clean_y:
             optimizer.tell(clean_x, clean_y)
 
@@ -457,9 +510,11 @@ class BayesianOptimizer(BaseOptimizer):
         bounds: List[Tuple[float, float]],
     ) -> List[List[float]]:
         """初始 LHS 采样"""
+        rng_seed = 42 if self.config.seed is None else int(self.config.seed)
+
         if lhs is None:
             # 后备：随机采样
-            np.random.seed(42)
+            np.random.seed(rng_seed)
             samples = []
             for _ in range(n_points):
                 sample = [
@@ -469,7 +524,7 @@ class BayesianOptimizer(BaseOptimizer):
                 samples.append(sample)
             return samples
 
-        np.random.seed(42)
+        np.random.seed(rng_seed)
         lhs_samples = lhs(len(bounds), n_points)
         samples = []
         for row in lhs_samples:
@@ -503,7 +558,7 @@ class BayesianOptimizer(BaseOptimizer):
                 job_id = offset + idx + 1
 
             # 检查是否存在部分完成的进度文件
-            progress_file = self.config.case_dir / f"bayes_progress_job{job_id}.csv"
+            progress_file = self._get_progress_file_path(job_id)
             partial_preds = None
             start_power_idx = 0
 
@@ -529,8 +584,10 @@ class BayesianOptimizer(BaseOptimizer):
                     param_strs.append(f"T_s={params[i]:.1f}K")
                 elif name == "absorptivity":
                     param_strs.append(f"absorptivity={params[i]:.3f}")
-                elif name == "damper":
-                    param_strs.append(f"damper={params[i]:.3f}")
+                elif name == "recoilCoeff":
+                    param_strs.append(f"recoilCoeff={params[i]:.3f}")
+                elif name == "radius_flavour":
+                    param_strs.append(f"Radius_Flavour={params[i]:.3f}")
                 else:
                     param_strs.append(f"{name}={params[i]:.4g}")
             print(f"  [Job {job_id}] 参数: {', '.join(param_strs)}")
@@ -546,20 +603,16 @@ class BayesianOptimizer(BaseOptimizer):
                     """每个功率点完成后的回调"""
                     partial_predictions_storage['data'] = preds_so_far.copy()
 
-                    # 计算当前已完成功率点的部分 NRMSE
+                    # 计算当前已完成功率点的部分 NRMSE（与 Bayes 目标保持一致）
                     n_completed = power_idx + 1
                     partial_obs = observations[:n_completed, :]
                     partial_preds = preds_so_far
 
-                    residuals = partial_preds - partial_obs
-                    nan_mask = np.isnan(residuals)
-                    if np.any(nan_mask):
-                        residuals[nan_mask] = PENALTY_VALUE
-
-                    scales = np.mean(np.abs(partial_obs), axis=0)
-                    scales = np.where(scales < 1e-10, 1.0, scales)
-                    normalized_residuals = residuals / scales
-                    partial_cost = float(np.sqrt(np.mean(normalized_residuals**2)) * 100)
+                    partial_cost, _ = compute_bayes_nrmse_percent(
+                        partial_preds,
+                        partial_obs,
+                        weights=np.asarray(self.output_weights, dtype=float),
+                    )
 
                     print(f"  [Job {job_id}] 功率点 {power_idx+1}/{len(exp_power_points)} 完成 "
                           f"(P={power_val:.0f}W), 部分NRMSE={partial_cost:.2f}%")
@@ -603,23 +656,18 @@ class BayesianOptimizer(BaseOptimizer):
                         on_power_complete=on_power_complete
                     )
 
-                # 计算归一化 RMSE (NRMSE)
-                residuals = predictions - observations
-                nan_mask = np.isnan(residuals)
-                if np.any(nan_mask):
-                    residuals[nan_mask] = PENALTY_VALUE
-
-                scales = np.mean(np.abs(observations), axis=0)
-                scales = np.where(scales < 1e-10, 1.0, scales)
-
-                normalized_residuals = residuals / scales
-                cost = float(np.sqrt(np.mean(normalized_residuals**2)) * 100)
-
-                nrmse_per_output = np.sqrt(np.mean(normalized_residuals**2, axis=0)) * 100
-                print(f"  [Job {job_id}] NRMSE = {cost:.2f}% "
-                      f"(width={nrmse_per_output[0]:.2f}%, "
-                      f"depth={nrmse_per_output[1]:.2f}%, "
-                      f"area={nrmse_per_output[2]:.2f}%)")
+                cost, nrmse_per_output = compute_bayes_nrmse_percent(
+                    predictions,
+                    observations,
+                    weights=np.asarray(self.output_weights, dtype=float),
+                )
+                output_names = ['width', 'depth', 'area']
+                weights = np.asarray(self.output_weights, dtype=float)
+                nrmse_str = ', '.join([
+                    f"{name}={nrmse_per_output[i]:.2f}%{'*' if weights[i] > 0 else ''}"
+                    for i, name in enumerate(output_names)
+                ])
+                print(f"  [Job {job_id}] NRMSE = {cost:.2f}% ({nrmse_str})")
                 results.append((params, cost, predictions))
 
             except Exception as e:
@@ -637,7 +685,7 @@ class BayesianOptimizer(BaseOptimizer):
                 print(f"  [Job {job_id}] 数据已保存 (共 {len(all_y)} 条记录)")
 
                 # 删除临时进度文件（如果存在）
-                progress_file = self.config.case_dir / f"bayes_progress_job{job_id}.csv"
+                progress_file = self._get_progress_file_path(job_id)
                 if progress_file.exists():
                     try:
                         progress_file.unlink()
@@ -665,27 +713,18 @@ class BayesianOptimizer(BaseOptimizer):
         power_points: np.ndarray,
     ) -> None:
         """
-        保存详细的优化历史到 CSV 文件
-        
-        只写入项目根目录下的 bayes_history.csv (或配置指定的位置)
+        保存详细的优化历史到 CSV 文件（仅 runs_root 下唯一文件）
         """
         rows = []
         for i, (params, cost, preds) in enumerate(zip(all_x, all_y, all_predictions)):
             # 动态构建参数列（根据active_names）
             row = {}
             for j, name in enumerate(self.runner.active_names):
-                # 使用标准化的列名
-                if name == "marangoni":
-                    row["Marangoni_Constant"] = params[j]
-                else:
-                    row[name] = params[j]
+                row[get_param_csv_column(name)] = params[j]
 
             # 添加固定参数（用于记录完整配置）
             for name, value in self.runner.fixed_dict.items():
-                if name == "marangoni":
-                    row["Marangoni_Constant"] = value
-                else:
-                    row[name] = value
+                row[get_param_csv_column(name)] = value
 
             if preds is not None:
                 for j, power in enumerate(power_points):
@@ -705,16 +744,17 @@ class BayesianOptimizer(BaseOptimizer):
 
         df = pd.DataFrame(rows)
 
-        # 保存到项目根目录（优先）
-        root_csv_file = self.config.case_dir / "bayes_history.csv"
-        df.to_csv(root_csv_file, index=False)
-        
-        # 也可以保存到 runs 作为备份，但用户说 "不再使用runs里的数据"
-        # 我们可以只保存到 root_csv_file
-        # 为了兼容性，保留 runs 下的副本，但主要逻辑依赖 root file
-        csv_file = self.config.runs_root / "bayes_history.csv"
+        csv_file = self._get_history_csv_path()
         csv_file.parent.mkdir(parents=True, exist_ok=True)
         df.to_csv(csv_file, index=False)
+
+    @staticmethod
+    def _resolve_param_csv_column(df: pd.DataFrame, param_name: str) -> str:
+        """解析参数列名（优先新列名，兼容旧列名）。"""
+        for candidate in get_param_csv_candidates(param_name):
+            if candidate in df.columns:
+                return candidate
+        raise ValueError(f"CSV 缺少参数列: {param_name}, 候选列={get_param_csv_candidates(param_name)}")
 
     def _save_partial_progress(
         self,
@@ -747,22 +787,16 @@ class BayesianOptimizer(BaseOptimizer):
             总功率点数量
         """
         # 保存到临时进度文件
-        progress_file = self.config.case_dir / f"bayes_progress_job{job_id}.csv"
+        progress_file = self._get_progress_file_path(job_id)
 
         # 动态构建参数行（与_save_detailed_csv保持一致）
         row = {"job_id": job_id}
         for j, name in enumerate(self.runner.active_names):
-            if name == "marangoni":
-                row["Marangoni_Constant"] = params[j]
-            else:
-                row[name] = params[j]
+            row[get_param_csv_column(name)] = params[j]
 
         # 添加固定参数
         for name, value in self.runner.fixed_dict.items():
-            if name == "marangoni":
-                row["Marangoni_Constant"] = value
-            else:
-                row[name] = value
+            row[get_param_csv_column(name)] = value
 
         row["progress"] = f"{n_completed}/{n_total}"
         row["partial_nrmse"] = partial_cost
@@ -800,8 +834,9 @@ class BayesianOptimizer(BaseOptimizer):
             print(f"  [警告] 无法加载实验数据: {e}")
             return incomplete_jobs
 
-        # 扫描所有进度文件
-        for progress_file in sorted(self.config.case_dir.glob("bayes_progress_job*.csv")):
+        # 扫描 runs_root 下的进度文件
+        self.config.runs_root.mkdir(parents=True, exist_ok=True)
+        for progress_file in sorted(self.config.runs_root.glob("bayes_progress_job*.csv")):
             try:
                 df = pd.read_csv(progress_file)
                 if len(df) == 0:
@@ -811,18 +846,10 @@ class BayesianOptimizer(BaseOptimizer):
                 job_id = int(row['job_id'])
 
                 # 提取参数（按 active_names 顺序）
-                csv_col_map = {
-                    "sigma": "sigma",
-                    "marangoni": "Marangoni_Constant",
-                    "substrate_temp": "substrate_temp",
-                    "absorptivity": "absorptivity",
-                    "damper": "damper",
-                }
-
                 params = []
                 for param_name in self.runner.active_names:
-                    csv_col = csv_col_map.get(param_name)
-                    if csv_col and csv_col in row:
+                    csv_col = self._resolve_param_csv_column(df, param_name)
+                    if csv_col in row:
                         params.append(float(row[csv_col]))
                     else:
                         raise ValueError(f"进度文件缺少参数: {param_name}")
@@ -886,7 +913,7 @@ class BayesianOptimizer(BaseOptimizer):
         """
         import pandas as pd
 
-        progress_file = self.config.case_dir / f"bayes_progress_job{job_id}.csv"
+        progress_file = self._get_progress_file_path(job_id)
         if not progress_file.exists():
             return None, 0
 
@@ -899,7 +926,7 @@ class BayesianOptimizer(BaseOptimizer):
         # 验证参数是否匹配（可选，防止恢复错误的job）
         param_match = True
         for i, name in enumerate(self.runner.active_names):
-            csv_name = "Marangoni_Constant" if name == "marangoni" else name
+            csv_name = self._resolve_param_csv_column(df, name)
             if csv_name in row and abs(row[csv_name] - params[i]) > 1e-6:
                 param_match = False
                 break
@@ -979,31 +1006,18 @@ class BayesianOptimizer(BaseOptimizer):
         """
         df = pd.read_csv(csv_path)
 
-        # 筛选成功的记录?
-        # User wants to load history. Even failed ones?
-        # Usually we only tell optimizer about successful ones.
-        # But we need to maintain indices for appending.
-        # Let's load ALL, but mark failures in y as NaNs.
-
         all_x = []
         all_y = []
         all_predictions = []
 
-        # 动态构建 CSV 列名映射（参数名 -> CSV 列名）
-        csv_col_map = {
-            "sigma": "sigma",
-            "marangoni": "Marangoni_Constant",
-            "substrate_temp": "substrate_temp",
-            "absorptivity": "absorptivity",
-            "damper": "damper",
-        }
+        csv_col_map = get_param_csv_column_map()
 
         # 检查必要的列是否存在
         required_csv_cols = []
         for param_name in self.runner.active_names:
-            csv_col = csv_col_map.get(param_name)
-            if csv_col is None:
+            if param_name not in csv_col_map:
                 raise ValueError(f"未知参数名: {param_name}")
+            csv_col = self._resolve_param_csv_column(df, param_name)
             required_csv_cols.append(csv_col)
 
         if not all(col in df.columns for col in required_csv_cols):
@@ -1011,9 +1025,11 @@ class BayesianOptimizer(BaseOptimizer):
 
         # 加载实验数据
         from ..data import load_experiment_data
+
         exp_data = load_experiment_data(self.config.exp_csv)
         power_points = exp_data[:, 0]
         exp_observations = exp_data[:, 1:4]
+        output_weights = np.asarray(self.config.output_weights, dtype=float)
 
         # 检测功率点列
         power_cols_map = {}
@@ -1027,45 +1043,45 @@ class BayesianOptimizer(BaseOptimizer):
         has_detailed_data = len(power_cols_map) == len(power_points)
 
         for _, row in df.iterrows():
-            # 动态读取 active_params 中的参数值
             params = []
             for param_name in self.runner.active_names:
-                csv_col = csv_col_map[param_name]
+                csv_col = self._resolve_param_csv_column(df, param_name)
                 params.append(float(row[csv_col]))
 
             predictions = None
             nrmse = np.nan
-            
+
+            # 优先使用 CSV 中已存储的 objective（热启动时保持历史目标值不被重算覆盖）
+            if "objective" in df.columns and not pd.isna(row["objective"]):
+                nrmse = float(row["objective"])
+
             # 尝试解析详细数据
             if has_detailed_data:
                 try:
                     current_preds = []
                     any_nan = False
-                    for i, power in enumerate(power_points):
+                    for power in power_points:
                         w_col, d_col, a_col = power_cols_map[power]
                         vals = [row[w_col], row[d_col], row[a_col]]
-                        # Check for NaNs in values (pandas uses NaN for empty cells)
                         if any(pd.isna(v) for v in vals):
                             any_nan = True
                             break
                         current_preds.append(vals)
-                    
+
                     if not any_nan:
                         predictions = np.array(current_preds)
-                        # 计算 RMSE
-                        residuals = predictions - exp_observations
-                        scales = np.mean(np.abs(exp_observations), axis=0)
-                        scales = np.where(scales < 1e-10, 1.0, scales)
-                        normalized_residuals = residuals / scales
-                        nrmse = float(np.sqrt(np.mean(normalized_residuals**2)) * 100)
+                        if np.isnan(nrmse):
+                            nrmse, _ = compute_bayes_nrmse_percent(
+                                predictions,
+                                exp_observations,
+                                weights=output_weights,
+                            )
                 except Exception:
                     predictions = None
 
-            # 如果无法从详细数据计算 NRMSE，尝试读取 stored value
+            # 若 objective 缺失且无法重算，则尝试回退到旧列名 NRMSE
             if np.isnan(nrmse):
-                if "objective" in df.columns and not pd.isna(row["objective"]):
-                    nrmse = float(row["objective"])
-                elif "NRMSE" in df.columns and not pd.isna(row["NRMSE"]):
+                if "NRMSE" in df.columns and not pd.isna(row["NRMSE"]):
                     nrmse = float(row["NRMSE"])
 
             all_x.append(params)

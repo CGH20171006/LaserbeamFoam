@@ -1,0 +1,59 @@
+case_dir: /home/cgh/LaserbeamFoam/Project/AutoCalibrateParameter/cases/Ti6Al4V/SingleTrack_Powder60um
+runs_root: /home/cgh/LaserbeamFoam/Project/AutoCalibrateParameter/cases/Ti6Al4V/SingleTrack_Powder60um/optimization_rounds/round1/runs
+foam_bashrc: null
+foam_runner: of2506
+postproc_python: python
+postproc_runner: null
+pvpython: pvpython
+postproc_script: /home/cgh/LaserbeamFoam/Project/applications/scripts/postProcessing/characterise_meltpool.py
+exp_csv: /home/cgh/LaserbeamFoam/Project/AutoCalibrateParameter/cases/Ti6Al4V/SingleTrack_Powder60um/SingleTrackExperimentalData.csv
+output_weights:
+  - 1.0
+  - 1.0
+  - 0.0
+sigma_bounds:
+  - 0.8
+  - 2.0
+marangoni_bounds:
+  - -0.0006
+  - -1.0e-06
+substrate_temp_bounds:
+  - 300.0
+  - 1000.0
+absorptivity_bounds:
+  - 1.0
+  - 1.01
+recoilCoeff_bounds:
+  - 1.0
+  - 1.01
+radius_flavour_bounds:
+  - 2.0
+  - 2.01
+active_params:
+  - sigma
+  - marangoni
+fixed_values:
+  substrate_temp: 300.0
+  radius_flavour: 2.0
+  recoilCoeff: 1.0
+  absorptivity: 1.0
+n_initial_points: 15
+n_batches: 1
+batch_size: 1
+acq_func: EI
+n_proc: 24
+mpirun_flags:
+  - --oversubscribe
+seed: 42
+laser_diameter: 7.0e-05
+cell_size: 1.0e-06
+x_domain:
+  - 0
+  - 0.0003
+y_begin_track: 0.0002
+y_end_track: 0.0004
+plot_geometry: true
+archive_mode: all
+warmstart_csv: bayes_history-Ti64.csv
+resume: true
+name: meltpool_bayes_round1

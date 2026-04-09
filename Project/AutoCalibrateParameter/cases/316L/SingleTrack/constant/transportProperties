@@ -48,13 +48,14 @@ gas
 }
 
 // phase change properties
-sigma                  1.266443080699506;
-Marangoni_Constant     -0.0006738719020162845;
+sigma                  3.015001442856276;
+Marangoni_Constant     -0.0015334026869519334;
 p0		                101000.0;
 Tvap                    3090.0;
 Mm                      5.593e-2;
 LatentHeatVap           7.45e6;
-damper                 0.6829984854528512;
+recoilCoeff            1.9400315672367352;
+damper                 0.5;
 emS                     0.4;
 emL                     0.1;
 TRef                    TRef [0 0 0 1 0 0 0]   300;

@@ -31,7 +31,7 @@ class MeltpoolModel(ACBICImodel):
     熔池仿真 ACBICI 模型
 
     输入维度 (xdim=1): 激光功率 (W)
-    参数维度 (pdim=4): sigma, Marangoni_Constant, substrate_temp, absorptivity
+    参数维度 (pdim=5): sigma, Marangoni_Constant, substrate_temp, absorptivity, Radius_Flavour
     输出维度 (ydim=3): 宽度(μm), 深度(μm), 面积(μm²)
 
     Attributes
@@ -62,6 +62,7 @@ class MeltpoolModel(ACBICImodel):
         marangoni_bounds = config.marangoni_bounds
         temp_bounds = config.substrate_temp_bounds
         absorptivity_bounds = config.absorptivity_bounds
+        radius_flavour_bounds = getattr(config, "radius_flavour_bounds", DEFAULT_BOUNDS["radius_flavour"])
 
         self.addParameter(
             label=PARAM_LATEX_LABELS[0],
@@ -79,6 +80,10 @@ class MeltpoolModel(ACBICImodel):
             label=PARAM_LATEX_LABELS[3],
             prior=Uniform(a=absorptivity_bounds[0], b=absorptivity_bounds[1]),
         )
+        self.addParameter(
+            label=PARAM_LATEX_LABELS[5],
+            prior=Uniform(a=radius_flavour_bounds[0], b=radius_flavour_bounds[1]),
+        )
 
         # 初始化案例管理器
         self.case_manager = OpenFOAMCaseManager.from_config(config)
@@ -92,7 +97,7 @@ class MeltpoolModel(ACBICImodel):
         x : numpy.ndarray, shape (n_samples, xdim)
             输入数组，每行是一个功率值 (W)
         p : numpy.ndarray, shape (n_samples, pdim)
-            参数数组，每行是 [sigma, Marangoni_Constant, substrate_temp, absorptivity]
+            参数数组，每行是 [sigma, Marangoni_Constant, substrate_temp, absorptivity, Radius_Flavour]
 
         Returns
         -------
@@ -110,19 +115,22 @@ class MeltpoolModel(ACBICImodel):
             marangoni = p[i, 1]
             substrate_temp = p[i, 2]
             absorptivity = p[i, 3]
+            radius_flavour = p[i, 4]
 
             print(f"\n[Model] 运行样本 {i + 1}/{n_samples}")
             print(f"  功率: {power_w:.1f} W")
             print(
                 f"  参数: σ={sigma:.4f}, γ={marangoni:.4e}, "
-                f"T_s={substrate_temp:.1f} K, η={absorptivity:.3f}"
+                f"T_s={substrate_temp:.1f} K, η={absorptivity:.3f}, "
+                f"R_f={radius_flavour:.3f}"
             )
             print(f"  有效功率: {power_w * absorptivity:.1f} W")
 
             try:
                 # 运行仿真和后处理
                 self.case_manager.update_parameters(
-                    sigma, marangoni, substrate_temp, absorptivity
+                    sigma, marangoni, substrate_temp, absorptivity,
+                    radius_flavour=radius_flavour
                 )
                 self.case_manager.set_power(power_w, absorptivity)
                 self.case_manager.run_simulation()

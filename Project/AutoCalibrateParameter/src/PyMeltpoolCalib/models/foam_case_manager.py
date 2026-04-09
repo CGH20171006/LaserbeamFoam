@@ -123,6 +123,13 @@ class OpenFOAMCaseManager:
         foam_runner: Optional[str] = None,
         mpirun_flags: Tuple[str, ...] = ("--oversubscribe",),
         hpc_mode: bool = False,
+        laser_diameter: float = 70e-6,
+        cell_size: float = 1e-6,
+        x_domain: Tuple[float, float] = (0.0, 0.0003),
+        y_begin_track: float = 150e-6,
+        y_end_track: float = 300e-6,
+        plot_geometry: bool = True,
+        archive_mode: str = "latest",
     ):
         """
         初始化案例管理器
@@ -160,6 +167,19 @@ class OpenFOAMCaseManager:
         self.foam_runner = foam_runner
         self.mpirun_flags = tuple(mpirun_flags)
         self.hpc_mode = hpc_mode
+        self.laser_diameter = laser_diameter
+        self.cell_size = cell_size
+        self.x_domain = tuple(x_domain)
+        self.y_begin_track = y_begin_track
+        self.y_end_track = y_end_track
+        self.plot_geometry = plot_geometry
+
+        normalized_archive_mode = (
+            "latest" if archive_mode is None else str(archive_mode).strip().lower()
+        )
+        if normalized_archive_mode not in {"latest", "all"}:
+            raise ValueError("archive_mode must be 'latest' or 'all'")
+        self.archive_mode = normalized_archive_mode
 
         # 关键文件路径
         self.transport_props = self.case_dir / "constant" / "transportProperties"
@@ -168,16 +188,22 @@ class OpenFOAMCaseManager:
         self.laser_props = self.case_dir / "constant" / "LaserProperties"
         self.main_foam = self.case_dir / "main.foam"
 
-    def update_damper(self, value: float) -> None:
+    def _build_reconstruct_command(self) -> str:
+        archive_mode = str(getattr(self, "archive_mode", "latest")).strip().lower()
+        if archive_mode == "all":
+            return "reconstructPar -noZero >log.reconstructPar 2>&1"
+        return "reconstructPar -latestTime >log.reconstructPar 2>&1"
+
+    def update_recoil_coeff(self, value: float) -> None:
         """
-        更新transportProperties中的damper系数
+        更新transportProperties中的反冲压力系数
 
         Parameters
         ----------
         value : float
-            反冲压力阻尼系数
+            反冲压力系数
         """
-        _update_dict_value(self.transport_props, "damper", value)
+        _update_dict_value(self.transport_props, "recoilCoeff", value)
 
     def update_parameters(
         self,
@@ -185,7 +211,9 @@ class OpenFOAMCaseManager:
         marangoni: float,
         substrate_temp: float,
         absorptivity: float = 1.0,
-        damper: float = 1.0,
+        recoil_coeff: float = 1.0,
+        radius_flavour: float = 2.0,
+        laser_radius: float = 50e-6,
     ) -> None:
         """
         更新材料参数
@@ -200,14 +228,20 @@ class OpenFOAMCaseManager:
             基板温度 (K)
         absorptivity : float, optional
             激光吸收率系数 (默认: 1.0)
-        damper : float, optional
-            反冲压力阻尼系数 (默认: 1.0)
+        recoil_coeff : float, optional
+            反冲压力系数 (默认: 1.0)
+        radius_flavour : float, optional
+            LaserProperties 中的 Radius_Flavour (默认: 2.0)
+        laser_radius : float, optional
+            LaserProperties 中的 laserRadius，单位 m (默认: 50e-6)
         """
         _update_dict_value(self.transport_props, "sigma", sigma)
         _update_dict_value(self.transport_props, "Marangoni_Constant", marangoni)
         _update_T_internal(self.temp_field, substrate_temp)
         _update_dict_value(self.laser_props, "absorptivity", absorptivity)
-        _update_dict_value(self.transport_props, "damper", damper)
+        _update_dict_value(self.transport_props, "recoilCoeff", recoil_coeff)
+        _update_dict_value(self.laser_props, "Radius_Flavour", radius_flavour)
+        _update_dict_value(self.laser_props, "laserRadius", laser_radius)
 
     def set_power(self, power_w: float, absorptivity: float = 1.0) -> None:
         """
@@ -258,7 +292,7 @@ class OpenFOAMCaseManager:
                 "setSolidFraction >log.setSolidFraction 2>&1",
                 "decomposePar >log.decomposePar 2>&1",
                 " ".join(mpirun_cmd),
-                "reconstructPar -latestTime >log.reconstructPar 2>&1",
+                self._build_reconstruct_command(),
             ]
         )
         _run_script("\n".join(lines), self.case_dir, self.foam_runner)
@@ -272,6 +306,8 @@ class OpenFOAMCaseManager:
             " ".join(self.mpirun_flags) if self.mpirun_flags else "--oversubscribe"
         )
 
+        reconstruct_cmd = self._build_reconstruct_command()
+
         cmd = (
             f"bash -lc 'set -eo pipefail; "
             f"export WM_PROJECT_SITE=${{WM_PROJECT_SITE-}}; source {bashrc} && "
@@ -281,16 +317,31 @@ class OpenFOAMCaseManager:
             f"setSolidFraction >log.setSolidFraction 2>&1; "
             f"decomposePar >log.decomposePar 2>&1; "
             f"mpirun -np {self.n_proc} {mpirun_flags} laserbeamFoam -parallel >log.laserbeamFoam 2>&1; "
-            f"reconstructPar -latestTime >log.reconstructPar 2>&1'"
+            f"{reconstruct_cmd}'"
         )
         _run(cmd, self.case_dir)
 
     def run_postprocess(self) -> None:
         """运行后处理脚本"""
+        self._write_input_data()
         if self.hpc_mode:
             self._run_postprocess_hpc()
         else:
             self._run_postprocess_pc()
+
+    def _write_input_data(self) -> None:
+        """在案例目录生成 input_data.py，覆盖后处理脚本的默认值"""
+        path = self.case_dir / "input_data.py"
+        of_loc = self.foam_bashrc or ""
+        path.write_text(
+            f"LASER_DIAMETER = {self.laser_diameter!r}\n"
+            f"OF_LOCATION = {of_loc!r}\n"
+            f"CELL_SIZE = {self.cell_size!r}\n"
+            f"X_MIN_AND_MAX_DOMAIN = [{self.x_domain[0]!r}, {self.x_domain[1]!r}]\n"
+            f"Y_COORD_BEGIN_TRACK = {self.y_begin_track!r}\n"
+            f"Y_COORD_END_TRACK = {self.y_end_track!r}\n"
+            f"PLOT_GEOMETRY_VS_Y_LOCATION = {self.plot_geometry!r}\n"
+        )
 
     def _run_postprocess_hpc(self) -> None:
         """HPC 模式后处理"""
@@ -334,6 +385,19 @@ class OpenFOAMCaseManager:
             "area_mean_m2": float(df["area"].mean()) if "area" in df.columns else math.nan,
         }
 
+    def _get_numeric_time_dirs(self) -> list[Path]:
+        """获取并排序案例目录下的数字时间步目录。"""
+        time_dirs: list[Path] = []
+        for path in self.case_dir.iterdir():
+            if not path.is_dir():
+                continue
+            try:
+                float(path.name)
+                time_dirs.append(path)
+            except ValueError:
+                continue
+        return sorted(time_dirs, key=lambda p: float(p.name))
+
     def archive_latest_time(self, dest_parent: Path, new_name: Optional[str] = None) -> None:
         """
         归档最后一个时间步的目录
@@ -348,16 +412,8 @@ class OpenFOAMCaseManager:
         import shutil
 
         # 找到最新的数字目录
-        time_dirs = []
-        for p in self.case_dir.iterdir():
-            if p.is_dir():
-                try:
-                    # 尝试解析为浮点数，排除 processor* 等
-                    float(p.name)
-                    time_dirs.append(p)
-                except ValueError:
-                    continue
-        
+        time_dirs = self._get_numeric_time_dirs()
+
         if not time_dirs:
             print("  [Archive] 未找到时间目录")
             return
@@ -376,6 +432,77 @@ class OpenFOAMCaseManager:
             print(f"  [Archive] 已保存 {latest_dir.name} -> {dest_path}")
         except Exception as e:
             print(f"  [Archive] 保存失败: {e}")
+
+    def archive_all_results(self, dest_parent: Path) -> None:
+        """
+        归档全部结果（所有时间步 + 关键输出文件）。
+
+        Parameters
+        ----------
+        dest_parent : Path
+            目标目录
+        """
+        import shutil
+
+        dest_parent = Path(dest_parent)
+        dest_parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            # 1) 所有数字时间步
+            time_dirs = self._get_numeric_time_dirs()
+            if not time_dirs:
+                print("  [Archive] 未找到时间目录")
+            for src in time_dirs:
+                dst = dest_parent / src.name
+                if dst.exists():
+                    shutil.rmtree(dst)
+                shutil.copytree(src, dst)
+
+            # 2) 关键目录
+            for dirname in ("constant", "system"):
+                src = self.case_dir / dirname
+                if not src.is_dir():
+                    continue
+                dst = dest_parent / dirname
+                if dst.exists():
+                    shutil.rmtree(dst)
+                shutil.copytree(src, dst)
+
+            # 3) 日志与结果 CSV
+            for pattern in ("log.*", "*.csv"):
+                for src in self.case_dir.glob(pattern):
+                    if src.is_file():
+                        shutil.copy2(src, dest_parent)
+
+            # 4) 便于可视化/复现的附加文件
+            for filename in ("main.foam", "input_data.py"):
+                src = self.case_dir / filename
+                if src.is_file():
+                    shutil.copy2(src, dest_parent)
+
+            print(f"  [Archive] 已保存全部结果 -> {dest_parent}")
+        except Exception as e:
+            print(f"  [Archive] 保存失败: {e}")
+
+    def archive_results(self, dest_parent: Path, mode: str = "latest") -> None:
+        """
+        根据归档模式保存结果。
+
+        Parameters
+        ----------
+        dest_parent : Path
+            目标目录
+        mode : str
+            归档模式："latest" 或 "all"
+        """
+        normalized = str(mode).strip().lower()
+        if normalized == "all":
+            self.archive_all_results(dest_parent)
+            return
+        if normalized == "latest":
+            self.archive_latest_time(dest_parent)
+            return
+        raise ValueError(f"Unknown archive mode: {mode}")
 
     @classmethod
     def from_config(cls, config) -> "OpenFOAMCaseManager":
@@ -402,4 +529,11 @@ class OpenFOAMCaseManager:
             foam_runner=config.foam_runner,
             mpirun_flags=config.mpirun_flags,
             hpc_mode=config.hpc_mode,
+            laser_diameter=config.laser_diameter,
+            cell_size=config.cell_size,
+            x_domain=config.x_domain,
+            y_begin_track=config.y_begin_track,
+            y_end_track=config.y_end_track,
+            plot_geometry=config.plot_geometry,
+            archive_mode=getattr(config, "archive_mode", "latest"),
         )

@@ -17,7 +17,7 @@ import numpy as np
 from scipy.optimize import least_squares
 
 from .base_optimizer import BaseOptimizer, OptimizationResult
-from ..simulation.objective import PENALTY_VALUE
+from ..simulation.objective import compute_bayes_nrmse_percent, compute_bayes_normalized_residuals
 
 if TYPE_CHECKING:
     from ..config.gradient_config import GradientConfig
@@ -103,7 +103,7 @@ class GradientOptimizer(BaseOptimizer):
                 print(f"\n方向 {direction_id}/{cfg.n_directions}")
                 result = self._optimize_single_direction(direction_id, exp_data)
                 all_results.append(result)
-                print(f"  完成: SSE = {result['cost']:.4e}")
+                print(f"  完成: NRMSE = {result['cost']:.4f}%")
 
         finally:
             stop_event.set()
@@ -113,7 +113,7 @@ class GradientOptimizer(BaseOptimizer):
         if not all_results:
             return OptimizationResult(
                 method="Gradient",
-                best_params=np.zeros(4),
+                best_params=np.zeros(len(self.runner.active_names)),
                 best_cost=float("inf"),
                 n_evaluations=0,
                 history={},
@@ -123,7 +123,7 @@ class GradientOptimizer(BaseOptimizer):
         best = min(all_results, key=lambda r: r["cost"])
         total_evals = sum(r.get("nfev", 0) for r in all_results)
 
-        print(f"\n最优方向: {best['direction_id']}, SSE = {best['cost']:.4e}")
+        print(f"\n最优方向: {best['direction_id']}, NRMSE = {best['cost']:.4f}%")
 
         return OptimizationResult(
             method="Gradient",
@@ -156,7 +156,7 @@ class GradientOptimizer(BaseOptimizer):
             优化结果
         """
         cfg = self.config
-        bounds = cfg.get_param_bounds()
+        bounds = self.runner.get_active_bounds()
 
         # 创建工作目录
         work_dir = cfg.runs_root / f"direction_{direction_id:03d}"
@@ -168,39 +168,45 @@ class GradientOptimizer(BaseOptimizer):
         ub = np.array([b[1] for b in bounds])
 
         # 历史记录
-        sse_history: List[float] = []
+        cost_history: List[float] = []
         params_history: List[List[float]] = []
 
         # 保存进度文件
         progress_file = work_dir / "progress.json"
 
         def residual_func(params: np.ndarray) -> np.ndarray:
-            """残差函数"""
+            """残差函数（Bayes 统一归一化残差）"""
             power_points = exp_data[:, 0]
             observations = exp_data[:, 1:4]
 
             predictions = self.runner.run(params, power_points)
 
-            residuals = (predictions - observations).flatten()
-            nan_mask = np.isnan(residuals)
-            if np.any(nan_mask):
-                residuals[nan_mask] = PENALTY_VALUE
+            weights = np.asarray(cfg.output_weights, dtype=float)
+            residuals = compute_bayes_normalized_residuals(
+                predictions,
+                observations,
+                weights=weights,
+            ).flatten()
 
-            sse = float(np.sum(residuals**2))
-            sse_history.append(sse)
+            cost, _ = compute_bayes_nrmse_percent(
+                predictions,
+                observations,
+                weights=weights,
+            )
+            cost_history.append(cost)
             params_history.append(params.tolist())
 
             # 更新进度
             self._save_progress(
                 progress_file,
                 direction_id,
-                len(sse_history),
-                sse,
-                min(sse_history),
+                len(cost_history),
+                cost,
+                min(cost_history),
             )
 
-            if len(sse_history) % cfg.log_every_eval == 0:
-                print(f"    [eval {len(sse_history)}] SSE = {sse:.4e}")
+            if len(cost_history) % cfg.log_every_eval == 0:
+                print(f"    [eval {len(cost_history)}] NRMSE = {cost:.4f}%")
 
             return residuals
 
@@ -215,7 +221,12 @@ class GradientOptimizer(BaseOptimizer):
             diff_step=cfg.diff_step,
         )
 
-        final_cost = float(result.cost) * 2  # least_squares 返回 0.5 * sum(residuals**2)
+        final_predictions = self.runner.run(result.x, exp_data[:, 0])
+        final_cost, _ = compute_bayes_nrmse_percent(
+            final_predictions,
+            exp_data[:, 1:4],
+            weights=np.asarray(cfg.output_weights, dtype=float),
+        )
 
         # 保存结果
         result_dict = {
@@ -226,7 +237,7 @@ class GradientOptimizer(BaseOptimizer):
             "status": int(result.status),
             "message": result.message,
             "x0": x0.tolist(),
-            "sse_history": sse_history,
+            "cost_history": cost_history,
         }
 
         result_file = work_dir / "result.json"
@@ -292,15 +303,15 @@ class GradientOptimizer(BaseOptimizer):
         filepath: Path,
         direction_id: int,
         n_eval: int,
-        current_sse: float,
-        best_sse: float,
+        current_cost: float,
+        best_cost: float,
     ) -> None:
         """保存进度信息"""
         data = {
             "direction_id": direction_id,
             "n_eval": n_eval,
-            "current_sse": current_sse,
-            "best_sse": best_sse,
+            "current_cost": current_cost,
+            "best_cost": best_cost,
             "ts": time.time(),
         }
         with open(filepath, "w") as f:
@@ -323,8 +334,8 @@ class GradientOptimizer(BaseOptimizer):
                         rows.append((
                             i,
                             d.get("n_eval", 0),
-                            d.get("current_sse"),
-                            d.get("best_sse"),
+                            d.get("current_cost", d.get("current_sse")),
+                            d.get("best_cost", d.get("best_sse")),
                         ))
                     except Exception:
                         pass

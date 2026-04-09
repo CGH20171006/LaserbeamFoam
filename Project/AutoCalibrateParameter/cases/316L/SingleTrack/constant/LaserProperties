@@ -35,7 +35,7 @@ V_incident (0 0 -1);
 nRadial 6;
 nAngular 36;
 
-laserRadius 35e-6;
+laserRadius            4.9982639535399366e-05;
 
 N_sub_divisions	1;
 
@@ -47,5 +47,5 @@ absorptivity           1.0;
 
 wavelength	1.064e-6;
 e_num_density	5.83e29;
-Radius_Flavour	2.0;
+Radius_Flavour         2.115988784124475;
 PowderSim true;

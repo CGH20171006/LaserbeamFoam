@@ -7,6 +7,8 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
+from .param_registry import canonical_param_name
+
 
 def filter_params_for_optimization(
     all_param_names: List[str],
@@ -41,7 +43,11 @@ def filter_params_for_optimization(
         # 默认优化所有参数
         active_names = all_param_names.copy()
     else:
-        active_names = active_params.copy()
+        active_names = []
+        for name in active_params:
+            canonical_name = canonical_param_name(name)
+            if canonical_name not in active_names:
+                active_names.append(canonical_name)
 
     # 构建优化空间
     active_bounds = [all_bounds[name] for name in active_names]
@@ -49,7 +55,8 @@ def filter_params_for_optimization(
     # 构建固定参数字典
     fixed_dict = {}
     if fixed_values:
-        fixed_dict.update(fixed_values)
+        for name, value in fixed_values.items():
+            fixed_dict[canonical_param_name(name)] = value
 
     # 对于未在active中的参数，如果没有指定固定值，使用边界中点
     for name in all_param_names:
