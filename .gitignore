@@ -6,8 +6,11 @@ test/
 **/test/
 
 # VTK files
-**/*.vtk
-**/*.VTK
+*.vtk
+*.VTK
+*.vtk.series
+VTKs
+VTK
 
 # Build files
 **/log.Allwmake

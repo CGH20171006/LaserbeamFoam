@@ -45,7 +45,7 @@ if (damperSwitch)
     damper.correctBoundaryConditions();  // ADDED
 }
 
-pVap = damperCoeff * 0.54*p0*Foam::exp(LatentHeatVap*Mm*((T - Tvap)/(R*T*Tvap))); // Apply damperCoeff to recoil pressure only
+pVap = recoilCoeff*0.54*p0*Foam::exp(LatentHeatVap*Mm*((T - Tvap)/(R*T*Tvap)));
 pVap.correctBoundaryConditions();  // ADDED
 
 
