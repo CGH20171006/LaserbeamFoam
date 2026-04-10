@@ -137,3 +137,10 @@ bayes_power_metrics.csv
 
 # Binary Data
 *.joblib
+
+# AI agent planning/notes
+findings.md
+progress.md
+task_plan.md
+CLAUDE.md
+CODEX.md
