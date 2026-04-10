@@ -4,7 +4,7 @@
 
 核心结论很简单：
 
-1. 同步 [`Project/AutoCalibrateParameter`](/home/cgh/LaserbeamFoam/Project/AutoCalibrateParameter) 项目文件。
+1. 同步 [`Project`](/home/cgh/LaserbeamFoam/Project) 项目文件。
 2. 在上层 `LaserbeamFoam` 仓库里修改 2 个 solver 源码文件。
 3. 重新编译 `laserbeamFoam` solver。
 4. 用相同的 case、配置和实验数据运行标定。
@@ -22,7 +22,7 @@
 
 ## 为什么不只同步 `AutoCalibrateParameter`
 
-这个项目不只改了 [`Project/AutoCalibrateParameter`](/home/cgh/LaserbeamFoam/Project/AutoCalibrateParameter) 下面的 Python 和 case 文件，还改了上层 `LaserbeamFoam` 求解器源码：
+这个项目不只改了 [`Project`](/home/cgh/LaserbeamFoam/Project) 下面的 Python 和 case 文件，还改了上层 `LaserbeamFoam` 求解器源码：
 
 - [`applications/solvers/laserbeamFoam/UEqn.H`](/home/cgh/LaserbeamFoam/applications/solvers/laserbeamFoam/UEqn.H)
 - [`applications/solvers/laserbeamFoam/createFields.H`](/home/cgh/LaserbeamFoam/applications/solvers/laserbeamFoam/createFields.H)
@@ -38,7 +38,7 @@
 
 如果你不想把整个 `LaserbeamFoam` 库都发给对方，最省事的做法是只同步下面三部分：
 
-1. [`Project/AutoCalibrateParameter`](/home/cgh/LaserbeamFoam/Project/AutoCalibrateParameter) 的完整项目文件，或者至少同步到同一个分支/提交。
+1. [`Project`](/home/cgh/LaserbeamFoam/Project) 的完整项目文件，或者至少同步到同一个分支/提交。
 2. 上层 solver 的 2 个修改文件，或者一份只包含这两个文件差异的 patch。
 3. 这份文档。
 
@@ -170,7 +170,7 @@ laserbeamFoam -help
 
 对于已经有 `LaserbeamFoam` 的协作者，推荐顺序如下：
 
-1. 获取最新的 [`Project/AutoCalibrateParameter`](/home/cgh/LaserbeamFoam/Project/AutoCalibrateParameter) 文件。
+1. 获取最新的 [`Project`](/home/cgh/LaserbeamFoam/Project) 文件。
 2. 在上层 `LaserbeamFoam` 仓库中修改 [`UEqn.H`](/home/cgh/LaserbeamFoam/applications/solvers/laserbeamFoam/UEqn.H) 和 [`createFields.H`](/home/cgh/LaserbeamFoam/applications/solvers/laserbeamFoam/createFields.H)。
 3. 重新编译 `laserbeamFoam`。
 4. 检查 case 配置、实验数据和运行脚本是否与项目版本一致。
@@ -197,8 +197,8 @@ laserbeamFoam -help
 
 最实用的一套材料是：
 
-1. [`Project/AutoCalibrateParameter`](/home/cgh/LaserbeamFoam/Project/AutoCalibrateParameter) 的分支、压缩包或 patch；
+1. [`Project`](/home/cgh/LaserbeamFoam/Project) 的分支、压缩包或 patch；
 2. 上层 solver 两个文件的修改版，或者一份小 patch；
-3. 这份 [`COLLABORATION_SETUP.md`](/home/cgh/LaserbeamFoam/Project/AutoCalibrateParameter/COLLABORATION_SETUP.md)。
+3. 这份 [`COLLABORATION_SETUP.md`](/home/cgh/LaserbeamFoam/Project/COLLABORATION_SETUP.md)。
 
 这样不需要让对方重新获取一整套完整库，也能保证她和你使用的是同一套项目逻辑与 solver 语义。

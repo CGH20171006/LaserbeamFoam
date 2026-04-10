@@ -9,7 +9,7 @@
 
 ## 当前项目默认环境
 
-- `Project/AutoCalibrateParameter`（包含 `cases/316L/SingleTrack`）统一使用：`meltpool-postproc`
+- `Project`（包含 `cases/316L/SingleTrack`）统一使用：`meltpool-postproc`
 
 ## 推荐执行方式
 

@@ -46,11 +46,3 @@ const dimensionedScalar TRef ("TRef",thermalProperties);
 const dimensionedScalar hC ("hC",thermalProperties);
 
 dimensionedScalar TSmooth("TSmooth",dimensionSet(0, 0, 0, 1, 0),50.0);
-
-// Read damper coefficient for recoil pressure adjustment
-const dimensionedScalar damperCoeff
-(
-    "damper",
-    dimless,
-    thermalProperties.lookupOrDefault("damper", 1.0)
-);

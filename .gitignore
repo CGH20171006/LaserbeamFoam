@@ -112,12 +112,12 @@ claude.md
 
 # Project Directory Exclusions
 Project/*
-!Project/AutoCalibrateParameter/
+!Project/
 
 # Ignore runs folders specifically within cases (or anywhere)
 **/runs/
-Project/AutoCalibrateParameter/archive_debug/
-Project/AutoCalibrateParameter/tests/
+Project/archive_debug/
+Project/tests/
 
 
 # Project Specific - Simulation Outputs

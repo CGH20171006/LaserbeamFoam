@@ -1,0 +1,3444 @@
+diff --git a/applications/solvers/laserbeamFoam/MULES/firstIter.H b/applications/solvers/laserbeamFoam/MULES/firstIter.H
+index d2d46cf3..d3de2e86 100644
+--- a/applications/solvers/laserbeamFoam/MULES/firstIter.H
++++ b/applications/solvers/laserbeamFoam/MULES/firstIter.H
+@@ -4,6 +4,8 @@ if (pimple.firstIter() || moveMeshOuterCorrectors)
+ 
+     if (mesh.changing())
+     {
++        #include "updateYDim.H"
++
+         // Do not apply previous time-step mesh compression flux
+         // if the mesh topology changed
+         if (mesh.topoChanging())
+diff --git a/applications/solvers/laserbeamFoam/Make/options b/applications/solvers/laserbeamFoam/Make/options
+index 15ab5d53..ab4bb3c4 100644
+--- a/applications/solvers/laserbeamFoam/Make/options
++++ b/applications/solvers/laserbeamFoam/Make/options
+@@ -1,4 +1,5 @@
+ EXE_INC = \
++    -I../../../src/MTHD/lnInclude \
+     -I../../../src/laserHeatSource/lnInclude \
+     -I$(LIB_SRC)/phaseSystemModels/twoPhaseInter/incompressibleInterPhaseTransportModel/lnInclude \
+     -I$(LIB_SRC)/phaseSystemModels/twoPhaseInter/VoFphaseIncompressibleTurbulenceModels/lnInclude \
+@@ -16,11 +17,13 @@ EXE_INC = \
+     -I$(LIB_SRC)/TurbulenceModels/turbulenceModels/lnInclude \
+     -I$(LIB_SRC)/TurbulenceModels/incompressible/lnInclude \
+     -I$(LIB_SRC)/TurbulenceModels/phaseIncompressible/lnInclude \
+-    -I$(LIB_SRC)/transportModels/immiscibleIncompressibleTwoPhaseMixture/lnInclude
++    -I$(LIB_SRC)/transportModels/immiscibleIncompressibleTwoPhaseMixture/lnInclude \
++    -I$(LIB_SRC)/lagrangian/basic/lnInclude
+ 
+ EXE_LIBS = \
+     -lfiniteVolume \
+     -L$(FOAM_USER_LIBBIN) \
++    -lMTHD \
+     -llaserHeatSource \
+     -lfvOptions \
+     -lsurfMesh \
+@@ -36,4 +39,5 @@ EXE_LIBS = \
+     -lincompressibleTurbulenceModels \
+     -lwaveModels \
+     -lVoFphaseTurbulentTransportModels \
+-    -lincompressibleInterPhaseTransportModels
++    -lincompressibleInterPhaseTransportModels \
++    -llagrangian
+diff --git a/applications/solvers/laserbeamFoam/TEqn.H b/applications/solvers/laserbeamFoam/TEqn.H
+index 10af0bff..fe732266 100644
+--- a/applications/solvers/laserbeamFoam/TEqn.H
++++ b/applications/solvers/laserbeamFoam/TEqn.H
+@@ -8,8 +8,8 @@
+     TRHS *= 0.0;
+ 
+     rhoCp = rho*cp;
+-    rhoCp.correctBoundaryConditions();  
+-    
++    rhoCp.correctBoundaryConditions();
++
+     rhophicp = fvc::interpolate(cp)*rhoPhi;
+ 
+     em = (epsilon1*emL) + ((1.0 - epsilon1)*emS);
+@@ -27,15 +27,15 @@
+         T.storePrevIter();
+         TRHS =
+             LatentHeat*((fvc::ddt(rho, epsilon1) + fvc::div(rhoPhi, epsilon1)));
+-        
+-        TRHS.correctBoundaryConditions();  
++
++        TRHS.correctBoundaryConditions();
+ 
+         Qv =
+             0.82*LatentHeatVap*Mm*p0
+            *Foam::exp(LatentHeatVap*Mm*((T - Tvap)/(R*T*Tvap)))
+            /Foam::pow(2*M_PI*Mm*R*T,0.5);
+-        
+-        Qv.correctBoundaryConditions();  
++
++        Qv.correctBoundaryConditions();
+ 
+         const volScalarField Qrad_expl (SB*em*(Foam::pow(TRef,4) + 3*Foam::pow(T,4)));
+         const volScalarField Qrad_inpl (-(4*SB*em*Foam::pow(T,3)));
+@@ -59,7 +59,11 @@
+         }
+ 
+         const volScalarField gradAlphaDamper (mag(gradAlpha)*thermalDamper);
+-        
++    const volScalarField& Joulesource =
++        mthd.valid()
++      ? mthd->Joulesource()
++      : zeroJoulesource;
++
+         fvScalarMatrix TEqn
+         (
+             fvm::ddt(rhoCp,T)
+@@ -67,10 +71,9 @@
+           - fvm::Sp(fvc::ddt(rhoCp) + fvc::div(rhophicp), T)
+           - fvm::laplacian(kappa, T)
+           - fvm::Sp(Qrad_inpl*gradAlphaDamper, T)
+-          //- (tau && gradU) // Viscous dissipation
+-         ==
++          ==
+             laser.deposition()
+-          - Qv*mag(gradAlpha)*thermalDamper
++          + Joulesource
+           + (Qrad_expl - Qv)*gradAlphaDamper
+           - TRHS
+         );
+@@ -78,13 +81,13 @@
+         TEqn.relax();
+ 
+         TEqn.solve();
+-        
+-        T.correctBoundaryConditions();  
++
++        T.correctBoundaryConditions();
+ 
+         // T.relax();
+ 
+         Tcorr = (TLiquidus - TSolidus)*epsilon1 + TSolidus;
+-        Tcorr.correctBoundaryConditions();  
++        Tcorr.correctBoundaryConditions();
+ 
+         epsilon1 =
+             max
+@@ -96,8 +99,8 @@
+                 ),
+                 scalar(0)
+             );
+-        
+-        epsilon1.correctBoundaryConditions();  
++
++        epsilon1.correctBoundaryConditions();
+ 
+         residual =
+             mag
+@@ -128,4 +131,4 @@
+ 
+     gradT = fvc::grad(T);
+     gradT.correctBoundaryConditions();  // ADDED - CRITICAL!
+-}
+\ No newline at end of file
++}
+diff --git a/applications/solvers/laserbeamFoam/UEqn.H b/applications/solvers/laserbeamFoam/UEqn.H
+index 8d21fbc0..e79e5108 100644
+--- a/applications/solvers/laserbeamFoam/UEqn.H
++++ b/applications/solvers/laserbeamFoam/UEqn.H
+@@ -49,39 +49,50 @@ pVap = damperCoeff * 0.54*p0*Foam::exp(LatentHeatVap*Mm*((T - Tvap)/(R*T*Tvap)))
+ pVap.correctBoundaryConditions();  // ADDED
+ 
+ 
+-    fvVectorMatrix UEqn
+-    (
+-        fvm::ddt(rho, U) + fvm::div(rhoPhi, U)
+-      + MRF.DDt(rho, U)
+-      + turbulence->divDevRhoReff(rho, U)
+-      + fvm::Sp(DC, U)
+-      - Marangoni*damper
+-     ==
+-        fvOptions(rho, U)
+-    );
++if (mthd.valid())
++{
++    mthd->updateLorentzForce();
++}
+ 
+-    UEqn.relax();
++const volVectorField& JcrossB =
++    mthd.valid()
++  ? mthd->JcrossB()
++  : zeroJcrossB;
+ 
+-    fvOptions.constrain(UEqn);
++fvVectorMatrix UEqn
++(
++    fvm::ddt(rho, U) + fvm::div(rhoPhi, U)
++  + MRF.DDt(rho, U)
++  + turbulence->divDevRhoReff(rho, U)
++  + fvm::Sp(DC, U)
++  - Marangoni*damper
++  - JcrossB*damper
++ ==
++    fvOptions(rho, U)
++);
+ 
+-    if (pimple.momentumPredictor())
+-    {
+-        solve
++UEqn.relax();
++
++fvOptions.constrain(UEqn);
++
++if (pimple.momentumPredictor())
++{
++    solve
++    (
++        UEqn
++     ==
++        fvc::reconstruct
+         (
+-            UEqn
+-         ==
+-            fvc::reconstruct
+             (
+-                (
+-                    mixture.surfaceTensionForce()*fvc::interpolate(damper)
+-                    + (fvc::interpolate(pVap)
+-                        *fvc::snGrad(alpha1)
+-                        *fvc::interpolate(damper))
+-                  - ghf*fvc::snGrad(rho*rhok)
+-                  - fvc::snGrad(p_rgh)
+-                ) * mesh.magSf()
+-            )
+-        );
+-
+-        fvOptions.correct(U);
+-    }
++                mixture.surfaceTensionForce()*fvc::interpolate(damper)
++                + (fvc::interpolate(pVap)
++                    *fvc::snGrad(alpha1)
++                    *fvc::interpolate(damper))
++              - ghf*fvc::snGrad(rho*rhok)
++              - fvc::snGrad(p_rgh)
++            ) * mesh.magSf()
++        )
++    );
++
++    fvOptions.correct(U);
++}
+diff --git a/applications/solvers/laserbeamFoam/createFields.H b/applications/solvers/laserbeamFoam/createFields.H
+index 6b5c6983..7478f1cd 100644
+--- a/applications/solvers/laserbeamFoam/createFields.H
++++ b/applications/solvers/laserbeamFoam/createFields.H
+@@ -224,14 +224,14 @@ volScalarField em
+ (
+     IOobject
+     (
+-        "em",                       
+-        runTime.timeName(),         
+-        mesh,                       
+-        IOobject::NO_READ,          
+-        IOobject::NO_WRITE          
++        "em",
++        runTime.timeName(),
++        mesh,
++        IOobject::NO_READ,
++        IOobject::NO_WRITE
+     ),
+     mesh,
+-    dimensionedScalar("zero", dimless, 0.0) 
++    dimensionedScalar("zero", dimless, 0.0)
+ );
+ 
+ const dimensionedScalar SB
+@@ -241,8 +241,8 @@ const dimensionedScalar SB
+     scalar(5.67e-8)
+ ); // Stefan-Boltzmann Constant
+ 
+-const scalar emL(readScalar(transportProperties.lookup("emL")));
+-const scalar emS(readScalar(transportProperties.lookup("emS")));
++[[maybe_unused]]const scalar emL(readScalar(transportProperties.lookup("emL")));
++[[maybe_unused]]const scalar emS(readScalar(transportProperties.lookup("emS")));
+ const dimensionedScalar TRef ("TRef",transportProperties);
+ 
+ const Polynomial<8> polykappa_m(transportPropertiesMetal.lookup("poly_kappa"));
+@@ -502,6 +502,34 @@ volVectorField Marangoni
+     dimensionedVector("Marangoni", dimensionSet(1, -2, -2, 0, 0), vector::zero)
+ );
+ 
++const volVectorField zeroJcrossB
++(
++    IOobject
++    (
++        "zeroJcrossB",
++        runTime.timeName(),
++        mesh,
++        IOobject::NO_READ,
++        IOobject::NO_WRITE
++    ),
++    mesh,
++    dimensionedVector("zeroJcrossB", dimensionSet(1, -2, -2, 0, 0), vector::zero)
++);
++
++const volScalarField zeroJoulesource
++(
++    IOobject
++    (
++        "zeroJoulesource",
++        runTime.timeName(),
++        mesh,
++        IOobject::NO_READ,
++        IOobject::NO_WRITE
++    ),
++    mesh,
++    dimensionedScalar("zeroJoulesource", dimensionSet(1, -1, -3, 0, 0), 0.0)
++);
++
+ // Recoil Pressure
+ volScalarField pVap
+ (
+@@ -533,12 +561,12 @@ volScalarField Qv
+ );
+ 
+ 
+-// Read damper coefficient from transportProperties
++// Read damper coefficient from transportProperties (default 1.0 if not specified)
+ const dimensionedScalar damperCoeff
+ (
+-    "damper",
++    "damperCoeff",
+     dimless,
+-    transportProperties
++    transportProperties.lookupOrDefault<scalar>("damper", scalar(1.0))
+ );
+ 
+ volScalarField damper
+@@ -599,11 +627,6 @@ volScalarField alpha_smoothed
+     dimensionedScalar("alpha_smoothed", dimensionSet(0, 0, 0, -0, 0), 0.0)
+ );
+ 
+-// volVectorField gradepsilon1(fvc::grad(epsilon1));
+-// volScalarField e1temp(fvc::average(epsilon1));
+-// volScalarField e2temp(fvc::average(epsilon1mask));
+-
+-
+ volScalarField e1temp
+ (
+     IOobject
+@@ -619,30 +642,6 @@ volScalarField e1temp
+ );
+ e1temp = fvc::average(epsilon1);
+ 
+-
+-dimensionedScalar elec_resistivity_metal
+-(
+-    "elec_resistivity",
+-    dimensionSet(1, 3, -3, 0, 0),
+-    transportPropertiesMetal//.lookup("elec_resistivity")
+-);
+-
+-
+-// Electrical resistivity of condensate only
+-volScalarField electrical_resistivity
+-(
+-    IOobject
+-    (
+-        "electrical_resistivity",
+-        runTime.timeName(),
+-        mesh,
+-        IOobject::NO_READ,
+-        IOobject::NO_WRITE
+-    ),
+-    mesh,
+-    elec_resistivity_metal
+-);
+-
+ volScalarField rhoCp
+ (
+     IOobject
+@@ -751,20 +750,19 @@ volScalarField meltHistory
+     dimensionedScalar("meltHistory", dimensionSet(0, 0, 0, -0, 0), 0.0)
+ );
+ 
+-// This variable is 1 if (alpha.metal >= 0.5 and epsilon1 >=0.5), 0 otherwise.
+-// These are the cells that are liquid and metallic at the current time
+-volScalarField liquidMetalCells
++// This variable is 1 if (alpha.metal >= 0.5 and epsilon1 >=0.5), 0 otherwise
++volScalarField condition
+ (
+     IOobject
+     (
+-        "liquidMetalCells",
++        "condition",
+         runTime.timeName(),
+         mesh,
+         IOobject::NO_READ,
+         IOobject::AUTO_WRITE
+     ),
+     mesh,
+-    dimensionedScalar("liquidMetalCells", dimensionSet(0, 0, 0, -0, 0), 0.0)
++    dimensionedScalar("condition", dimensionSet(0, 0, 0, -0, 0), 0.0)
+ );
+ 
+ 
+@@ -787,9 +785,41 @@ autoPtr<transportModelType> turbulence
+ #include "readhRef.H"
+ #include "gh.H"
+ 
++
++
++
++
++autoPtr<mthdModel> mthd(nullptr);
++
++if (mthdModel::electromagneticsEnabled(mesh, "transportProperties"))
++{
++    mthd.reset(new mthdModel(mesh, "transportProperties"));
++}
++
++const dimensionedScalar eleccond1 =
++    mthdModel::readElectricalConductivity(transportPropertiesMetal);
++
++volScalarField electrical_resistivity
++(
++    IOobject
++    (
++        "electrical_resistivity",
++        runTime.timeName(),
++        mesh,
++        IOobject::NO_READ,
++        IOobject::NO_WRITE
++    ),
++    mesh,
++    1.0/eleccond1
++);
++
++
++
++
+ // Create laser heat source
+ laserHeatSource laser(mesh);
+ 
++#include "updateYDim.H"
+ #include "updateProps.H"
+ 
+ // volScalarField depositionTemp
+diff --git a/applications/solvers/laserbeamFoam/isoAdvector/firstIter.H b/applications/solvers/laserbeamFoam/isoAdvector/firstIter.H
+index 9abff8f2..0f7d42a2 100644
+--- a/applications/solvers/laserbeamFoam/isoAdvector/firstIter.H
++++ b/applications/solvers/laserbeamFoam/isoAdvector/firstIter.H
+@@ -9,6 +9,8 @@ if (pimple.firstIter() || moveMeshOuterCorrectors)
+ 
+     if (mesh.changing())
+     {
++        #include "updateYDim.H"
++
+         gh = (g & mesh.C()) - ghRef;
+         ghf = (g & mesh.Cf()) - ghRef;
+ 
+diff --git a/applications/solvers/laserbeamFoam/laserbeamFoam.C b/applications/solvers/laserbeamFoam/laserbeamFoam.C
+index 7b6d8c11..f7e3c338 100644
+--- a/applications/solvers/laserbeamFoam/laserbeamFoam.C
++++ b/applications/solvers/laserbeamFoam/laserbeamFoam.C
+@@ -36,7 +36,7 @@ Description
+     with optional mesh motion and mesh topology changes including adaptive
+     re-meshing.
+ Authors
+-    
++
+     Tom Flint, UoM.
+     Philip Cardiff, UCD.
+     Gowthaman Parivendhan, UCD.
+@@ -65,6 +65,7 @@ Authors
+ 
+ #include "Polynomial.H"
+ #include "laserHeatSource.H"
++#include "mthdModel.H"
+ 
+ // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+ 
+@@ -125,14 +126,14 @@ int main(int argc, char *argv[])
+                 #include "MULES/alphaCourantNo.H"
+                 #include "MULES/setDeltaT.H"
+             }
+-        } 
++        }
+         else if (interfaceTrackingScheme == "isoAdvector")
+         {
+             #include "isoAdvector/porousCourantNo.H"
+             #include "isoAdvector/porousAlphaCourantNo.H"
+             #include "isoAdvector/setDeltaT.H"
+         }
+-        
++
+         ++runTime;
+ 
+         Info<< "Time = " << runTime.timeName() << nl << endl;
+@@ -146,7 +147,7 @@ int main(int argc, char *argv[])
+                 #include "MULES/firstIter.H"
+                 #include "MULES/alphaControls.H"
+                 #include "MULES/alphaEqnSubCycle.H"
+-            } 
++            }
+             else if (interfaceTrackingScheme == "isoAdvector")
+             {
+                 #include "isoAdvector/firstIter.H"
+@@ -154,12 +155,8 @@ int main(int argc, char *argv[])
+                 #include "isoAdvector/alphaEqnSubCycle.H"
+             }
+ 
+-     
+-
+             #include "updateProps.H"
+ 
+-
+-
+             // Update the laser deposition field
+             laser.updateDeposition
+             (
+@@ -174,6 +171,10 @@ int main(int argc, char *argv[])
+             }
+ 
+             #include "UEqn.H"
++            if (mthd.valid())
++            {
++                mthd->solve(phi, U);
++            }
+             #include "TEqn.H"
+ 
+             // --- Pressure corrector loop
+@@ -189,10 +190,10 @@ int main(int argc, char *argv[])
+         }
+ 
+         // Update the melt history
+-        const volScalarField& alphaMetal = 
++        const volScalarField& alphaMetal =
+             mesh.lookupObject<volScalarField>("alpha.metal");
+-        liquidMetalCells = pos(alphaMetal - 0.5) * pos(epsilon1 - 0.5);
+-        meltHistory += liquidMetalCells;
++        condition = pos(alphaMetal - 0.5) * pos(epsilon1 - 0.5);
++        meltHistory += condition;
+ 
+         runTime.write();
+ 
+@@ -200,14 +201,12 @@ int main(int argc, char *argv[])
+         if (runTime.outputTime())
+         {
+             laser.writeRayPathsToVTK();
++            laser.writeRayPathVTKSeriesFile();
+         }
+ 
+         runTime.printExecutionTime(Info);
+     }
+ 
+-    // Write a VTK series file for easy-opening of the ray files
+-    laser.writeRayPathVTKSeriesFile();
+-
+     Info<< "End\n" << endl;
+ 
+     return 0;
+diff --git a/applications/solvers/laserbeamFoam/updateProps.H b/applications/solvers/laserbeamFoam/updateProps.H
+index 4cec2418..91294ef2 100644
+--- a/applications/solvers/laserbeamFoam/updateProps.H
++++ b/applications/solvers/laserbeamFoam/updateProps.H
+@@ -1,6 +1,17 @@
+ {
+     TSolidus = alpha1*Tsolidus1 + (1.0 - alpha1)*Tsolidus2;
+     TLiquidus = alpha1*Tliquidus1 + (1.0 - alpha1)*Tliquidus2;
++
++    if (mthd.valid())
++    {
++        mthd->correctIncompressibleProperties
++        (
++            alpha1,
++            transportPropertiesMetal,
++            transportPropertiesGas
++        );
++    }
++
+     beta = alpha1*beta1 + (1.0 - alpha1)*beta2;
+     rhok = (1.0 - max(epsilon1*(beta)*(T - TSolidus), 0.0));
+ 
+@@ -25,29 +36,7 @@
+ 
+     #include "updateKappaCp.H"
+ 
+-    // Update the cell size fields
+-    const faceList & ff = mesh.faces();
+-    const pointField & pp = mesh.points();
+     const vectorField& CI = mesh.C();
+-    scalarField& yDimI = laser.yDim();
+-    forAll(CI, celli)
+-    {
+-        const cell& cc = mesh.cells()[celli];
+-        labelList pLabels(cc.labels(ff));
+-        pointField pLocal(pLabels.size(), vector::zero);
+-
+-        forAll(pLabels, pointi)
+-        {
+-            pLocal[pointi] = pp[pLabels[pointi]];
+-        }
+-
+-        yDimI[celli] =
+-            Foam::max(pLocal & vector(0, 1, 0))
+-          - Foam::min(pLocal & vector(0, 1, 0));
+-    }
+-
+-    laser.yDim().correctBoundaryConditions();
+-
+     metalaverage = fvc::average(alpha1);
+     metalaverage.correctBoundaryConditions();  // ADDED
+ 
+@@ -84,7 +73,7 @@
+         // Get references to the patch fields
+         scalarField& alpha_filteredPatch = alpha_filteredBf[patchi];
+         const scalarField& alpha1Patch = alpha1Bf[patchi];
+-        
++
+         // Apply the same logic to each face in the patch
+         forAll(alpha_filteredPatch, facei)
+         {
+@@ -106,20 +95,19 @@
+     alpha_filtered.correctBoundaryConditions();
+ 
+     alpha_smoothed = fvc::average(alpha1);
+-    alpha_smoothed.correctBoundaryConditions();
+ 
+     LatentHeat =
+         alpha_filtered*LatentHeat1 + (1.0 - alpha_filtered)*LatentHeat2;
+-    LatentHeat.correctBoundaryConditions();  // ADDED
+ 
+     // gradepsilon1 = fvc::grad(epsilon1);
+     // gradepsilon1.correctBoundaryConditions();
+ 
+-    n_filtered = fvc::grad(alpha_filtered)/((mag(fvc::grad(alpha_filtered)) + deltaN));
+-    n_filtered.correctBoundaryConditions();  // ADDED - IMPORTANT!
++    {
++        const volVectorField gradAlphaFiltered(fvc::grad(alpha_filtered));
++        n_filtered = gradAlphaFiltered/(mag(gradAlphaFiltered) + deltaN);
++    }
+ 
+     e1temp = fvc::average(epsilon1);
+-    e1temp.correctBoundaryConditions();
+ 
+     const scalarField& e1tempI = e1temp;
+     const scalarField& epsilon1I = epsilon1;
+@@ -165,6 +153,6 @@
+     }
+     else{
+         gh = (g & mesh.C());
+-        ghf = (g & mesh.Cf());  
++        ghf = (g & mesh.Cf());
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/applications/solvers/laserbeamFoam/updateYDim.H b/applications/solvers/laserbeamFoam/updateYDim.H
+new file mode 100644
+index 00000000..45b050f4
+--- /dev/null
++++ b/applications/solvers/laserbeamFoam/updateYDim.H
+@@ -0,0 +1,25 @@
++if (!laser.radialPolarHeatSource())
++{
++    const faceList& ff = mesh.faces();
++    const pointField& pp = mesh.points();
++    const vectorField& CI = mesh.C();
++    scalarField& yDimI = laser.yDim();
++
++    forAll(CI, celli)
++    {
++        const cell& cc = mesh.cells()[celli];
++        labelList pLabels(cc.labels(ff));
++        pointField pLocal(pLabels.size(), vector::zero);
++
++        forAll(pLabels, pointi)
++        {
++            pLocal[pointi] = pp[pLabels[pointi]];
++        }
++
++        yDimI[celli] =
++            Foam::max(pLocal & vector(0, 1, 0))
++          - Foam::min(pLocal & vector(0, 1, 0));
++    }
++
++    laser.yDim().correctBoundaryConditions();
++}
+diff --git a/src/laserHeatSource/Make/files b/src/laserHeatSource/Make/files
+index 628d67e1..5c74367d 100644
+--- a/src/laserHeatSource/Make/files
++++ b/src/laserHeatSource/Make/files
+@@ -1,4 +1,4 @@
+-compactRay.C
++laserRayParticle.C
+ laserHeatSource.C
+ 
+ 
+diff --git a/src/laserHeatSource/Make/options b/src/laserHeatSource/Make/options
+index eaa37583..acff2deb 100644
+--- a/src/laserHeatSource/Make/options
++++ b/src/laserHeatSource/Make/options
+@@ -6,7 +6,9 @@ EXE_INC = \
+     -I$(LIB_SRC)/thermophysicalModels/thermophysicalProperties/lnInclude \
+     -I$(LIB_SRC)/thermophysicalModels/reactionThermo/lnInclude \
+     -I$(LIB_SRC)/finiteVolume/lnInclude \
+-    -I$(LIB_SRC)/meshTools/lnInclude
++    -I$(LIB_SRC)/meshTools/lnInclude \
++    -I$(LIB_SRC)/lagrangian/basic/lnInclude
++
+ 
+ LIB_LIBS = \
+     -lfluidThermophysicalModels \
+@@ -14,4 +16,5 @@ LIB_LIBS = \
+     -lsolidThermo \
+     -lthermophysicalProperties \
+     -lfiniteVolume \
+-    -lmeshTools
++    -lmeshTools \
++    -llagrangian
+diff --git a/src/laserHeatSource/compactRay.C b/src/laserHeatSource/compactRay.C
+deleted file mode 100644
+index fde958b0..00000000
+--- a/src/laserHeatSource/compactRay.C
++++ /dev/null
+@@ -1,71 +0,0 @@
+-/*---------------------------------------------------------------------------*\
+-License
+-    This file is part of solids4foam.
+-
+-    solids4foam is free software: you can redistribute it and/or modify it
+-    under the terms of the GNU General Public License as published by the
+-    Free Software Foundation, either version 3 of the License, or (at your
+-    option) any later version.
+-
+-    solids4foam is distributed in the hope that it will be useful, but
+-    WITHOUT ANY WARRANTY; without even the implied warranty of
+-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+-    General Public License for more details.
+-
+-    You should have received a copy of the GNU General Public License
+-    along with solids4foam.  If not, see <http://www.gnu.org/licenses/>.
+-
+-\*---------------------------------------------------------------------------*/
+-
+-#include "compactRay.H"
+-
+-// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+-
+-namespace Foam
+-{
+-
+-// * * * * * * * * * * * * * * Static Data Members * * * * * * * * * * * * * //
+-
+-defineTypeNameAndDebug(compactRay, 0);
+-
+-
+-// * * * * * * * * * * * * * * * * Constructors  * * * * * * * * * * * * * * //
+-
+-
+-compactRay::compactRay()
+-:
+-    position_(vector::zero),
+-    direction_(vector::one),
+-    power_(0),
+-    currentCell_(-1), 
+-    bounceCount_(0),
+-    globalRayIndex_(-1),
+-    active_(false),
+-    path_()
+-{}
+-
+-
+-compactRay::compactRay(const point& position, const vector& dir, scalar power)
+-:
+-    position_(position),
+-    direction_(dir),
+-    power_(power), 
+-    currentCell_(-1),
+-    bounceCount_(0),
+-    globalRayIndex_(-1),
+-    active_(true),
+-    path_()
+-{
+-    direction_ /= mag(direction_) + VSMALL;
+-}
+-
+-
+-// * * * * * * * * * * * * * * * Member Functions  * * * * * * * * * * * * * //
+-
+-
+-
+-// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+-
+-} // End namespace Foam
+-
+-// ************************************************************************* //
+diff --git a/src/laserHeatSource/compactRay.H b/src/laserHeatSource/compactRay.H
+deleted file mode 100644
+index 3a638f4c..00000000
+--- a/src/laserHeatSource/compactRay.H
++++ /dev/null
+@@ -1,233 +0,0 @@
+-/*---------------------------------------------------------------------------*\
+-License
+-    This file is part of solids4foam.
+-
+-    solids4foam is free software: you can redistribute it and/or modify it
+-    under the terms of the GNU General Public License as published by the
+-    Free Software Foundation, either version 3 of the License, or (at your
+-    option) any later version.
+-
+-    solids4foam is distributed in the hope that it will be useful, but
+-    WITHOUT ANY WARRANTY; without even the implied warranty of
+-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+-    General Public License for more details.
+-
+-    You should have received a copy of the GNU General Public License
+-    along with solids4foam.  If not, see <http://www.gnu.org/licenses/>.
+-
+-Class
+-    compactRay
+-
+-Description
+-    Class for storing information about individual rays propagating through
+-    a polMesh in a ray tracing algorithm.
+-
+-Author
+-    Thomas Flint, The University of Manchester.
+-    Philip Cardiff, University College Dublin.
+-
+-SourceFiles
+-    compactRay.C
+-
+-\*---------------------------------------------------------------------------*/
+-
+-#ifndef compactRay_H
+-#define compactRay_H
+-
+-#include "point.H"
+-#include "vector.H"
+-#include "DynamicList.H"
+-#include "HashSet.H"
+-
+-
+-// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+-
+-namespace Foam
+-{
+-/*---------------------------------------------------------------------------*\
+-                        Class compactRay Declaration
+-\*---------------------------------------------------------------------------*/
+-
+-
+-class compactRay
+-{
+-    public:
+-
+-        // Public data
+-
+-            //- Current position
+-            point position_;
+-
+-            //- Current direction
+-            vector direction_;
+-
+-            //- Current power
+-            scalar power_;
+-
+-            //- Index of the cell the ray currently occupies (or most recently occupied)
+-            //  It is -1 if it is not in a local processor cell
+-            label currentCell_;
+-
+-            //- Number of bounces
+-            label bounceCount_;
+-
+-            //- Global index of the ray
+-            label globalRayIndex_;
+-
+-            //- Is it active?
+-            bool active_;
+-
+-            //- List of all locations the ray has visited
+-            DynamicList<point> path_;
+-
+-
+-    // Public functions
+-
+-    //- Runtime type information
+-    TypeName("compactRay");
+-
+-    // Constructors
+-
+-        //- Empty constructor
+-        compactRay();
+-
+-        //- Construct from position, direction and power
+-        compactRay(const point& position, const vector& dir, scalar power);
+-
+-        // Destructor
+-
+-            virtual ~compactRay()
+-            {}
+-
+-
+-        // Public functions
+-
+-        //- Reset the position, direction and power
+-        void reset(const point& position, const vector& dir, scalar power)
+-        {
+-            position_ = position;
+-            direction_ = dir / (mag(dir) + VSMALL);
+-            power_ = power;
+-            currentCell_ = -1;
+-            bounceCount_ = 0;
+-            globalRayIndex_ = -1;
+-            active_ = true;
+-        }
+-
+-        //- Compare equals
+-        bool operator==(const compactRay& other) const
+-        {
+-            return
+-                position_ == other.position_
+-             && direction_ == other.direction_
+-             && power_ == other.power_
+-             && currentCell_ == other.currentCell_
+-             && bounceCount_ == other.bounceCount_
+-             && globalRayIndex_ == other.globalRayIndex_
+-             && active_ == other.active_
+-             && path_ == other.path_;
+-        }
+-
+-        //- Compare not equals
+-        bool operator!=(const compactRay& other) const
+-        {
+-            return !(*this == other);
+-        }
+-
+-        //- Output stream operator
+-        friend Ostream& operator<<(Ostream& os, const compactRay& ray)
+-        {
+-            return os  << ray.position_
+-                       << ray.direction_
+-                       << ray.power_
+-                       << ray.currentCell_
+-                       << ray.bounceCount_
+-                       << ray.globalRayIndex_
+-                       << ray.active_
+-                       << ray.path_;
+-        }
+-
+-        //- Input stream operator
+-        friend Istream& operator>>(Istream& is, compactRay& ray)
+-        {
+-            return is  >> ray.position_
+-                       >> ray.direction_
+-                       >> ray.power_
+-                       >> ray.currentCell_
+-                       >> ray.bounceCount_
+-                       >> ray.globalRayIndex_
+-                       >> ray.active_
+-                       >> ray.path_;
+-        }
+-};
+-
+-
+-/*---------------------------------------------------------------------------*\
+-                        Helper functions and structs
+-\*---------------------------------------------------------------------------*/
+-
+-struct combineRayLists
+-{
+-    void operator()
+-    (
+-        DynamicList<compactRay>& x,
+-        const DynamicList<compactRay>& y
+-    ) const
+-    {
+-        // Create a hash set of existing items for O(1) lookup
+-        HashSet<compactRay> existing;
+-        forAll(x, i)
+-        {
+-            existing.insert(x[i]);
+-        }
+-
+-        // Add only new items
+-        forAll(y, i)
+-        {
+-            if (!existing.found(y[i]))
+-            {
+-                x.append(y[i]);
+-            }
+-        }
+-    }
+-};
+-
+-
+-struct combineLists
+-{
+-    void operator()
+-    (
+-        DynamicList<point>& x,
+-        const DynamicList<point>& y
+-    ) const
+-    {
+-        x.append(y);
+-    }
+-};
+-
+-
+-    struct combineRayPaths
+-{
+-    void operator()
+-    (
+-        DynamicList<DynamicList<point>>& x,
+-        const DynamicList<DynamicList<point>>& y
+-    ) const
+-    {
+-        forAll(y, i)
+-        {
+-            x.append(y[i]);
+-        }
+-    }
+-};
+-
+-
+-// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+-
+-} // End namespace Foam
+-
+-// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+-
+-#endif
+-
+-// ************************************************************************* //
+diff --git a/src/laserHeatSource/laserHeatSource.C b/src/laserHeatSource/laserHeatSource.C
+index 20b04b30..57af0429 100644
+--- a/src/laserHeatSource/laserHeatSource.C
++++ b/src/laserHeatSource/laserHeatSource.C
+@@ -1,29 +1,28 @@
+ /*---------------------------------------------------------------------------*\
+ License
+-    This file is part of solids4foam.
++    This file is part of laserbeamFoam.
+ 
+-    solids4foam is free software: you can redistribute it and/or modify it
++    laserbeamFoam is free software: you can redistribute it and/or modify it
+     under the terms of the GNU General Public License as published by the
+     Free Software Foundation, either version 3 of the License, or (at your
+     option) any later version.
+ 
+-    solids4foam is distributed in the hope that it will be useful, but
++    laserbeamFoam is distributed in the hope that it will be useful, but
+     WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+     General Public License for more details.
+ 
+     You should have received a copy of the GNU General Public License
+-    along with solids4foam.  If not, see <http://www.gnu.org/licenses/>.
++    along with laserbeamFoam.  If not, see <http://www.gnu.org/licenses/>.
+ 
+ \*---------------------------------------------------------------------------*/
+ 
+ #include "laserHeatSource.H"
+ #include "fvc.H"
+ #include "constants.H"
+-#include "findLocalCell.H"
+ #include "SortableList.H"
+-#include "globalIndex.H"
+ 
++#include "findLocalCell.H"
+ // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+ 
+ namespace Foam
+@@ -37,9 +36,9 @@ defineTypeNameAndDebug(laserHeatSource, 0);
+ // * * * * * * * * * * * * Private Member Functions  * * * * * * * * * * * * //
+ 
+ 
+-void laserHeatSource::createInitialRays
++void laserHeatSource::seedRayCloud
+ (
+-    List<compactRay>& rays,
++    Cloud<laserRayParticle>& cloud,
+     const fvMesh& mesh,
+     const vector& currentLaserPosition,
+     const scalar laserRadius,
+@@ -49,80 +48,141 @@ void laserHeatSource::createInitialRays
+     const vector& V_incident,
+     const scalar Radius_Flavour,
+     const scalar Q_cond,
+-    const scalar beam_radius
++    const scalar beam_radius,
++    label& nTotalRays
+ ) const
+ {
+-    DynamicList<vector> initial_points;
+-    DynamicList<scalar> point_assoc_power;
++    // ================================================================
++    // Compute ALL ray starting positions and powers identically on
++    // every processor (same as the old createInitialRays), but only
++    // add a particle to the cloud on the processor that owns the
++    // starting cell.
++    // ================================================================
+ 
+     const scalarField& yDimI = yDim_;
+     const scalar pi = constant::mathematical::pi;
+ 
++    // -- Build global list of ray positions and powers --
++
++    DynamicList<vector> initial_points;
++    DynamicList<scalar> point_assoc_power;
++
++    // All seed points will be perturbed by a small amount to avoid landing
++    // exactly on a face
++    // The magnitude of the perturbation is calculated as a small fraction of
++    // the smallest cell dimension, as opposed to an absolute value, and we take
++    // care to perturb in the ray direction and transverse to the ray direction
++
++    // Ray direction
++    const vector d = V_incident/(mag(V_incident) + VSMALL);
++
++    // Pick a stable “arbitrary” axis not parallel to d
++    const vector a =
++        (mag(d & vector(1,0,0)) < 0.9) ? vector(1,0,0) : vector(0,0,1);
++
++    // Perpendicular unit vector
++    vector t = d ^ a;
++    t /= (mag(t) + VSMALL);
++
++    // Minimum length scale
++    const scalar lCell = cbrt(gMin(mesh.V()));
++    const scalar eps = sqrt(SMALL)*lCell;
++
++    // Safe perturbation in the ray direction and transverse ray direction
++    const vector perturbation = eps*(d + t);
++    Info<< "    Perturbation vector for ray seed points = " << perturbation
++        << endl;
++
+     if (radialPolarHeatSource())
+     {
+         Info<< "nRadial: " << nRadial << nl
+-            << "nAngular: "<< nAngular <<endl;
++            << "nAngular: " << nAngular << endl;
+ 
+         const scalar rMax = 1.5*beam_radius;
+-        const label totalSamples = nRadial * nAngular;
+-        const label samplesPerProc = totalSamples/Pstream::nProcs();
+-        const label remainder = totalSamples % Pstream::nProcs();
+-        const label myRank = Pstream::myProcNo();
+-        const label startIdx = myRank * samplesPerProc + min(myRank, remainder);
+-        const label endIdx = startIdx + samplesPerProc + (myRank < remainder ? 1 : 0);
+-        const label localSamples = endIdx - startIdx;
+ 
++        // ================================================================
++        // Improved radial discretisation for smoother Gaussian
++        //
++        // Use cell-edge based radial boundaries to compute exact annulus
++        // areas. Each ring iR covers r from r_inner[iR] to r_outer[iR].
++        // The sample point is at the area-weighted centroid of the annulus.
++        // ================================================================
++
++        // Compute radial boundaries (edges of annular rings)
++        List<scalar> radialBoundaries(nRadial + 1);
++        for (label iR = 0; iR <= nRadial; ++iR)
++        {
++            // Uniform spacing of boundaries
++            radialBoundaries[iR] = rMax * scalar(iR) / scalar(nRadial);
++        }
++
++        // Compute sample points (area-weighted centroid of each annulus)
++        // For an annulus from r1 to r2, the centroid is at:
++        //   r_centroid = (2/3) * (r2^3 - r1^3) / (r2^2 - r1^2)
+         List<scalar> radialPoints(nRadial);
++        List<scalar> annulusAreas(nRadial);
++
+         for (label iR = 0; iR < nRadial; ++iR)
+         {
+-            // Use sqrt spacing for better Gaussian sampling
+-            const scalar fraction = scalar(iR + 0.5)/nRadial;
+-            radialPoints[iR] = rMax * pow(fraction,1.0);
++            const scalar r_inner = radialBoundaries[iR];
++            const scalar r_outer = radialBoundaries[iR + 1];
++
++            // Exact annulus area (full ring, will be divided by nAngular)
++            annulusAreas[iR] = pi * (sqr(r_outer) - sqr(r_inner));
++
++            // Area-weighted centroid for sample position
++            if (r_inner < SMALL)
++            {
++                // Central disc: centroid at 2/3 * r_outer
++                radialPoints[iR] = (2.0/3.0) * r_outer;
++            }
++            else
++            {
++                // Annulus: use exact centroid formula
++                radialPoints[iR] =
++                    (2.0/3.0)
++                   * (pow3(r_outer) - pow3(r_inner))
++                   / (sqr(r_outer) - sqr(r_inner));
++            }
+         }
+ 
+-        const point P0 (currentLaserPosition.x(),currentLaserPosition.y(),currentLaserPosition.z());
++        const label totalSamples = nRadial * nAngular;
++        const label samplesPerProc = totalSamples/Pstream::nProcs();
++        const label remainder = totalSamples % Pstream::nProcs();
++        const label myRank = Pstream::myProcNo();
++        const label startIdx =
++            myRank * samplesPerProc + min(myRank, remainder);
++        const label endIdx =
++            startIdx + samplesPerProc + (myRank < remainder ? 1 : 0);
++        const label localSamples = endIdx - startIdx;
++
++        const point P0
++        (
++            currentLaserPosition.x(),
++            currentLaserPosition.y(),
++            currentLaserPosition.z()
++        );
+ 
+-        // Normalise vector
+         const vector V_i(V_incident/(mag(V_incident) + SMALL));
+ 
+-        // // Generate two orthonormal vectors in the plane
+-        const vector a = (mag(V_i.z()) < 0.9) ? vector(0, 0, 1) : vector(0, 1, 0);
++        const vector a =
++            (mag(V_i.z()) < 0.9) ? vector(0, 0, 1) : vector(0, 1, 0);
+         vector u = (V_i ^ a);
+         u = u/mag(u);
+         const vector v = (V_i ^ u);
+-        const vector perturbation (1e-10,1e-10,1e-10);
+ 
+         for (label localIdx = 0; localIdx < localSamples; ++localIdx)
+         {
+             const label globalIdx = startIdx + localIdx;
+-
+-            // Convert global index to angular and radial indices
+             const label iTheta = globalIdx/nRadial;
+             const label iR = globalIdx % nRadial;
+ 
+-            // Angular discretization
+             const scalar theta = 2.0*pi*iTheta/nAngular;
++            const scalar r = radialPoints[iR];
+ 
+-            // Radial discretization (uniform in radius)
+-            // const scalar r = rMax*(iR + 0.5)/nRadial;
+-            const scalar r = radialPoints[iR];//if using adaptive sampling
++            // Area element for this ray (annulus sector)
++            const scalar area = annulusAreas[iR] / scalar(nAngular);
+ 
+-            // Calculate area element
+-            const scalar deltaTheta = 2.0*pi/nAngular;
+-
+-            scalar deltaR = 0.0;
+-            if (iR == 0)
+-            {
+-                deltaR = radialPoints[0];
+-            }
+-            else
+-            {
+-                deltaR = radialPoints[iR] - radialPoints[iR - 1];
+-            }
+-
+-            const scalar area = r*deltaR*deltaTheta;
+-
+-            // Convert to Cartesian coordinates in local plane system
+             const scalar x_local = r*cos(theta);
+             const scalar y_local = r*sin(theta);
+ 
+@@ -130,21 +190,18 @@ void laserHeatSource::createInitialRays
+ 
+             initial_points.append(globalPos + perturbation);
+ 
++            // Gaussian power distribution using the sample point radius
+             point_assoc_power.append
+             (
+                 area
+                *(
+                     Radius_Flavour*Q_cond
+-                   /(
+-                        Foam::pow(beam_radius, 2.0)*pi
+-                    )
++                   /(Foam::pow(beam_radius, 2.0)*pi)
+                 )
+                *Foam::exp
+                 (
+                   - Radius_Flavour
+-                   *(
+-                        Foam::pow(r, 2.0)/Foam::pow(beam_radius, 2.0)
+-                    )
++                   *(Foam::pow(r, 2.0)/Foam::pow(beam_radius, 2.0))
+                 )
+             );
+         }
+@@ -156,7 +213,6 @@ void laserHeatSource::createInitialRays
+         forAll(CI, celli)
+         {
+             const scalar x_coord = CI[celli].x();
+-            // const scalar y_coord = CI[celli].y();
+             const scalar z_coord = CI[celli].z();
+ 
+             const scalar r =
+@@ -176,7 +232,7 @@ void laserHeatSource::createInitialRays
+                 {
+                     for (label Ray_k = 0; Ray_k < N_sub_divisions; Ray_k++)
+                     {
+-                        const point p_1
++                        point p_1
+                         (
+                             CI[celli].x()
+                           - (yDimI[celli]/2.0)
+@@ -187,6 +243,9 @@ void laserHeatSource::createInitialRays
+                           + ((yDimI[celli]/(N_sub_divisions+1))*(Ray_k+1))
+                         );
+ 
++                        // Perturb the point
++                        p_1 += perturbation;
++
+                         initial_points.append(p_1);
+ 
+                         point_assoc_power.append
+@@ -194,9 +253,7 @@ void laserHeatSource::createInitialRays
+                             sqr(yDimI[celli]/N_sub_divisions)
+                            *(
+                                 (Radius_Flavour*Q_cond)
+-                               /(
+-                                    Foam::pow(beam_radius, 2.0)*pi
+-                                )
++                               /(Foam::pow(beam_radius, 2.0)*pi)
+                             )
+                            *Foam::exp
+                             (
+@@ -214,50 +271,79 @@ void laserHeatSource::createInitialRays
+     }
+ 
+     // List with size equal to number of processors
++    // Gather all initial points/powers to all processors
+     List<pointField> gatheredData(Pstream::nProcs());
+-    List<scalarField> gatheredData_powers(Pstream::nProcs());
++    List<scalarField> gatheredPowers(Pstream::nProcs());
+ 
+     // Populate and gather the list onto the master processor.
++    // Distibulte the data accross the different processors
+     gatheredData[Pstream::myProcNo()] = initial_points;
+     Pstream::gatherList(gatheredData);
+-    gatheredData_powers[Pstream::myProcNo()] = point_assoc_power;
+-    Pstream::gatherList(gatheredData_powers);
+-
+-    // Distibulte the data accross the different processors
+     Pstream::broadcastList(gatheredData);
+-    Pstream::broadcastList(gatheredData_powers);
++
++    gatheredPowers[Pstream::myProcNo()] = point_assoc_power;
++    Pstream::gatherList(gatheredPowers);
++    Pstream::broadcastList(gatheredPowers);
+ 
+     // List of initial points
+     pointField rayCoords
+     (
+-        ListListOps::combine<Field<vector> >
++        ListListOps::combine<Field<vector>>
+         (
+             gatheredData,
+-            accessOp<Field<vector> >()
++            accessOp<Field<vector>>()
+         )
+     );
+ 
+     scalarField rayPowers
+     (
+-        ListListOps::combine<Field<scalar> >
++        ListListOps::combine<Field<scalar>>
+         (
+-            gatheredData_powers,
+-            accessOp<Field<scalar> >()
++            gatheredPowers,
++            accessOp<Field<scalar>>()
+         )
+     );
+ 
+-    // Create a list of compactRay objects
+-    rays.setSize(rayCoords.size());
+-    forAll(rays, i)
++
++    // Create a list of Ray objects
++    nTotalRays = rayCoords.size();
++
++    label seedCellI = -1;
++
++    forAll(rayCoords, i)
+     {
+-        rays[i] = compactRay
+-        (
+-            rayCoords[i], V_incident, rayPowers[i]
+-        );
+-        rays[i].globalRayIndex_ = i;
+-        rays[i].currentCell_ = mesh.findCell(rayCoords[i]);
+-        rays[i].path_.append(rayCoords[i]);
++        const label cellI = findLocalCell
++            (
++                rayCoords[i],
++                seedCellI,
++                mesh,
++                100,    // maxLocalSearch
++                false   // debug
++            );
++
++        if (cellI >= 0)
++        {
++            // Update seed for next iteration - nearby rays benefit
++            seedCellI = cellI;
++
++            // This processor owns this ray's starting cell
++            laserRayParticle* pPtr = new laserRayParticle
++                (
++                    mesh,
++                    rayCoords[i],
++                    cellI,
++                    V_incident,
++                    rayPowers[i],
++                    0.0,        // dA
++                    i           // globalRayIndex
++                );
++
++            cloud.addParticle(pPtr);
++        }
+     }
++
++    Info<< "    Total rays: " << nTotalRays
++        << ", local particles: " << cloud.size() << endl;
+ }
+ 
+ 
+@@ -296,7 +382,7 @@ laserHeatSource::laserHeatSource
+     (
+         IOobject
+         (
+-            "Laser_boundary", // rename to laserBoundary?
++            "Laser_boundary",
+             mesh.time().timeName(),
+             mesh,
+             IOobject::MUST_READ,
+@@ -331,7 +417,7 @@ laserHeatSource::laserHeatSource
+             IOobject::NO_WRITE
+         ),
+         mesh,
+-        dimensionedScalar("rayNumber",dimensionSet(0, 0, 0, -0, 0),-1.0)
++        dimensionedScalar("rayNumber", dimensionSet(0, 0, 0, -0, 0), -1.0)
+     ),
+     rayQ_
+     (
+@@ -359,7 +445,7 @@ laserHeatSource::laserHeatSource
+         mesh,
+         dimensionedScalar("yDim", dimensionSet(0, 1, 0, 0, 0), 1.0)
+     ),
+-    powderSim_(lookupOrDefault<Switch>("PowderSim", false)),
++    powderSim_(lookupOrDefault<Switch>("PowderSim", false)), // Needed for cases where we have spherical particles (that have jagged edges or cartesian grids) which will cause spurious currents due to these large gradients - we extend the damping term by 1 cell
+     radialPolarHeatSource_
+     (
+         found("radialPolarHeatSource")
+@@ -372,30 +458,24 @@ laserHeatSource::laserHeatSource
+     timeVsLaserPower_(0),
+     rayPaths_(0),
+     vtkTimes_(),
+-    globalBB_(mesh.bounds())  // Initialize with local bounds first
++    globalBB_(mesh.bounds())
+ {
+     Info<< "radialPolarHeatSource = " << radialPolarHeatSource_ << endl;
+ 
+     // Calculate global bounding box
+     {
+-        // Get local bounding box
+         boundBox localBB = mesh.bounds();
+-
+-        // Initialize global bounding box with local bounds
+         globalBB_ = localBB;
+ 
+-        // Reduce to get global bounds across all processors
+         reduce(globalBB_.min(), minOp<vector>());
+         reduce(globalBB_.max(), maxOp<vector>());
+ 
+-        // Inflate the bounding box by 1% to avoid issues with rays starting
+-        // exactly on the boundary
+         globalBB_.inflate(0.01);
++        // Inflate the bounding box by 1% to avoid issues with rays starting just at the mesh boundary -> probably not an issue but worth doing
+ 
+         Info<< "Scaled global mesh bounding box: " << globalBB_ << endl;
+     }
+ 
+-
+     // Initialise the laser power and position
+     if (found("lasers"))
+     {
+@@ -416,7 +496,10 @@ laserHeatSource::laserHeatSource
+             laserNames_[laserI] = laserEntries[laserI].keyword();
+             Info<< "Reading laser " << laserNames_[laserI] << endl;
+ 
+-            laserDicts_.set(laserI, new dictionary(laserEntries[laserI].dict()));
++            laserDicts_.set
++            (
++                laserI, new dictionary(laserEntries[laserI].dict())
++            );
+ 
+             timeVsLaserPosition_.set
+             (
+@@ -437,7 +520,7 @@ laserHeatSource::laserHeatSource
+             );
+         }
+ 
+-        // Check that a single laser is not also defined
++            // Check that a single laser is not also defined
+ 
+         if (found("timeVsLaserPosition"))
+         {
+@@ -456,7 +539,7 @@ laserHeatSource::laserHeatSource
+     else
+     {
+         // There is no lists of lasers, just one
+-
++        // Backward compatibility: single laser specified in main dict
+         rayPaths_.setSize(1);
+         laserNames_.setSize(1);
+         laserDicts_.setSize(1);
+@@ -481,8 +564,7 @@ laserHeatSource::laserHeatSource
+         );
+     }
+ 
+-
+-    // Update laserBoundary
++        // Update laserBoundary - only used in old boundary based initialisation
+     laserBoundary_ = fvc::average(laserBoundary_);
+ 
+     if (debug)
+@@ -492,7 +574,6 @@ laserHeatSource::laserHeatSource
+     }
+ 
+     // Give errors if the old input format is found
+-
+     if (found("HS_bg"))
+     {
+         FatalErrorInFunction
+@@ -500,7 +581,7 @@ laserHeatSource::laserHeatSource
+             << "position in time via the laserPositionVsTime sub-dict"
+             << exit(FatalError);
+     }
+-
++    // Give errors if the old input format is found
+     if (found("HS_lg"))
+     {
+         FatalErrorInFunction
+@@ -508,7 +589,7 @@ laserHeatSource::laserHeatSource
+             << "position in time via the laserPositionVsTime sub-dict"
+             << exit(FatalError);
+     }
+-
++    // Give errors if the old input format is found
+     if (found("HS_velocity"))
+     {
+         FatalErrorInFunction
+@@ -516,7 +597,7 @@ laserHeatSource::laserHeatSource
+             << "position in time via the laserPositionVsTime sub-dict"
+             << exit(FatalError);
+     }
+-
++    // Give errors if the old input format is found
+     if (found("HS_Q"))
+     {
+         FatalErrorInFunction
+@@ -524,7 +605,7 @@ laserHeatSource::laserHeatSource
+             << "power in time via the laserPowereVsTime sub-dict"
+             << exit(FatalError);
+     }
+-
++    // Give errors if the old input format is found
+     if (found("elec_resistivity"))
+     {
+         FatalErrorInFunction
+@@ -545,7 +626,8 @@ void laserHeatSource::updateDeposition
+     const volScalarField& resistivity_in
+ )
+ {
+-    // Reset fields
++    Info<< "Updating deposition" << endl;
++
+     deposition_ *= 0.0;
+     laserBoundary_ *= 0.0;
+     laserBoundary_ = fvc::average(laserBoundary_);
+@@ -553,12 +635,6 @@ void laserHeatSource::updateDeposition
+     rayNumber_ *= 0.0;
+     rayQ_ *= 0.0;
+ 
+-    deposition_.correctBoundaryConditions();
+-    laserBoundary_.correctBoundaryConditions();
+-    errorTrack_.correctBoundaryConditions();
+-    rayNumber_.correctBoundaryConditions();
+-    rayQ_.correctBoundaryConditions();
+-
+     const scalar time = deposition_.time().value();
+ 
+     forAll(laserNames_, laserI)
+@@ -569,11 +645,11 @@ void laserHeatSource::updateDeposition
+         const scalar currentLaserPower =
+             timeVsLaserPower_[laserI](time);
+ 
+-        Info<< "Laser " << laserNames_[laserI] << nl
+-            << "Laser mean position = " << currentLaserPosition << nl
+-            << "Laser power = " << currentLaserPower << endl;
++        Info<< "Laser: " << laserNames_[laserI] << nl
++            << "    mean position = " << currentLaserPosition << nl
++            << "    power = " << currentLaserPower << endl;
+ 
+-        // Dict for current laser
++            // Dict for current laser
+         const dictionary& dict = laserDicts_[laserI];
+ 
+         // If defined, add oscillation to laser position
+@@ -582,21 +658,20 @@ void laserHeatSource::updateDeposition
+             const scalar oscAmpX(readScalar(dict.lookup("HS_oscAmpX")));
+             const scalar oscFreqX(readScalar(dict.lookup("HS_oscFreqX")));
+             const scalar pi = constant::mathematical::pi;
++            currentLaserPosition[vector::X] +=
++                oscAmpX*sin(2*pi*oscFreqX*time);
++        }// If defined, add oscillation to laser position
+ 
+-            currentLaserPosition[vector::X] += oscAmpX*sin(2*pi*oscFreqX*time);
+-        }
+-
+-        // If defined, add oscillation to laser position
+         if (dict.found("HS_oscAmpZ"))
+         {
+             const scalar oscAmpZ(readScalar(dict.lookup("HS_oscAmpZ")));
+             const scalar oscFreqZ(readScalar(dict.lookup("HS_oscFreqZ")));
+             const scalar pi = constant::mathematical::pi;
++            currentLaserPosition[vector::Z] +=
++                oscAmpZ*cos(2*pi*oscFreqZ*time);
++        }// If defined, add oscillation to laser position
+ 
+-            currentLaserPosition[vector::Z] += oscAmpZ*cos(2*pi*oscFreqZ*time);
+-        }
+-
+-        Info<< "Laser position including any oscillation = "
++        Info<< "    position including any oscillation = "
+             << currentLaserPosition << endl;
+ 
+         scalar laserRadius = 0.0;
+@@ -623,40 +698,34 @@ void laserHeatSource::updateDeposition
+                 << exit(FatalError);
+         }
+ 
+-        const label nRadial
+-        (
+-            dict.lookupOrDefault<label>("nRadial", 5)
+-        );
+-
+-        const label nAngular
+-        (
+-            dict.lookupOrDefault<label>("nAngular", 30)
+-        );
+-
++        const label nRadial(dict.lookupOrDefault<label>("nRadial", 5));
++        const label nAngular(dict.lookupOrDefault<label>("nAngular", 30));
+         const label N_sub_divisions
+         (
+             dict.lookupOrDefault<label>("N_sub_divisions", 1)
+         );
+         const vector V_incident(dict.lookup("V_incident"));
+         const scalar wavelength(readScalar(dict.lookup("wavelength")));
+-        const scalar e_num_density(readScalar(dict.lookup("e_num_density")));
+-        const scalar dep_cutoff(dict.lookupOrDefault<scalar>("dep_cutoff", 0.5));
+-
++        const scalar e_num_density
++        (
++            readScalar(dict.lookup("e_num_density"))
++        );
++        const scalar dep_cutoff
++        (
++            dict.lookupOrDefault<scalar>("dep_cutoff", 0.5)
++        );
+         const scalar Radius_Flavour
+         (
+             dict.lookupOrDefault<scalar>("Radius_Flavour", 2.0)
+         );
+-
+         const Switch useLocalSearch
+         (
+             dict.lookupOrDefault<Switch>("useLocalSearch", true)
+         );
+-
+         const label maxLocalSearch
+         (
+             dict.lookupOrDefault<label>("maxLocalSearch", 100)
+         );
+-
+         const scalar rayPowerRelTol
+         (
+             dict.lookupOrDefault<scalar>("rayPowerRelTol", 1e-6)
+@@ -687,10 +756,23 @@ void laserHeatSource::updateDeposition
+     }
+ 
+     deposition_.correctBoundaryConditions();
+-
+ }
+ 
+ 
++// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
++//  Lagrangian particle-based parallel ray-tracing: updateDeposition
++//
++//  Algorithm:
++//    1. Create a Cloud<laserRayParticle>
++//    2. Seed it with ray particles (one per ray, owned by local proc)
++//    3. Call cloud.move() - OpenFOAM handles:
++//       - Exact face-to-face tracking (no step size, no missed cells)
++//       - Automatic transfer at processor boundaries
++//       - Hit callbacks for walls, patches, processor patches
++//    4. Collect ray paths from finished particles for VTK output
++// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
++
++
+ void laserHeatSource::updateDeposition
+ (
+     const volScalarField& alphaFiltered,
+@@ -714,19 +796,11 @@ void laserHeatSource::updateDeposition
+     const boundBox& globalBB
+ )
+ {
+-    const fvMesh& mesh  = deposition_.mesh();
+-    const Time& runTime  = mesh.time();
+-    const scalarField VI = mesh.V();
+-    const dimensionedScalar time = runTime.time();
++    const fvMesh& mesh = deposition_.mesh();
+     const scalar pi = constant::mathematical::pi;
+-    const dimensionedScalar a_cond
+-    (
+-        "a_cond", dimensionSet(0, 1, 0, 0, 0), laserRadius
+-    );
+-    const dimensionedScalar Q_cond
+-    (
+-        "Q_cond", dimensionSet(1, 2, -3, 0, 0), currentLaserPower
+-    );
++    const scalar beam_radius = laserRadius;
++
++    // Material constants
+     const scalar plasma_frequency = Foam::sqrt
+     (
+         (
+@@ -742,25 +816,29 @@ void laserHeatSource::updateDeposition
+     const scalar angular_frequency =
+         2.0*pi*constant::universal::c.value()/wavelength;
+ 
+-    if (debug)
+-    {
+-        Info<< "useLocalSearch: " << useLocalSearch << nl << nl
+-            << nl << endl;
+-    }
++    // ==================================================================
++    // Step 1: Create the ray particle cloud
++    // ==================================================================
++
++    Cloud<laserRayParticle> rayCloud
++    (
++        mesh,
++        "laserRays",
++        IDLList<laserRayParticle>()
++    );
+ 
+-    // It is assumed that the laser comes in on top y boundary
+-    const vector normal_interface(0, 1, 0);
+-    const scalar beam_radius = a_cond.value();
++    // ==================================================================
++    // Step 2: Seed the cloud with ray particles
++    //
++    // seedRayCloud computes ALL ray positions/powers globally, but
++    // each processor only adds particles for cells it owns.
++    // ==================================================================
+ 
+-    // Take a references for efficiency and brevity
+-    const vectorField& nFilteredI = nFiltered;
+-    const scalarField& alphaFilteredI = alphaFiltered;
++    label nTotalRays = 0;
+ 
+-    // Create the initial rays
+-    List<compactRay> rays;
+-    createInitialRays
++    seedRayCloud
+     (
+-        rays,
++        rayCloud,
+         mesh,
+         currentLaserPosition,
+         laserRadius,
+@@ -769,399 +847,137 @@ void laserHeatSource::updateDeposition
+         nAngular,
+         V_incident,
+         Radius_Flavour,
+-        Q_cond.value(),
+-        beam_radius
++        currentLaserPower,
++        beam_radius,
++        nTotalRays
+     );
+ 
+-    // remainingGlobalRays will store the rays that have yet to propagate out of
+-    // the domain or deposit all of their power
+-    DynamicList<compactRay> remainingGlobalRays(rays);
++    // Compute absolute power tolerance from relative tolerance
++    // (Based on average ray power, not total power)
++    const scalar rayPowerAbsTol =
++        rayPowerRelTol*currentLaserPower/max(nTotalRays, 1);
++
++    // ==================================================================
++    // Step 3: Move the particles through the mesh
++    //
++    //  Cloud::move() handles everything:
++    //    - Face-to-face tracking via trackToAndHitFace()
++    //    - Automatic parallel transfer at processor patches
++    //    - Callback to hitWallPatch() / hitPatch() at boundaries
++    //
++    //  The deposition field is written to directly by each particle
++    //  during tracking - only to local cells, so no reduce needed.
++    // ==================================================================
++
++    DynamicList<label> finishedRayIDs;
++    DynamicList<DynamicList<point>> finishedRayPaths;
++
++    laserRayParticle::trackingData td
++    (
++        rayCloud,
++        alphaFiltered,
++        nFiltered,
++        resistivity_in,
++        deposition_,
++        rayQ_,
++        rayNumber_,
++        dep_cutoff,
++        plasma_frequency,
++        angular_frequency,
++        rayPowerAbsTol,
++        finishedRayIDs,
++        finishedRayPaths
++    );
++
++    // Move all ray particles through the mesh.
++    // trackTime is not physically meaningful for rays (instantaneous),
++    // but the Cloud::move interface requires it. We use GREAT to ensure
++    // the rays are tracked to completion in a single call.
++    rayCloud.storeGlobalPositions();
++    rayCloud.move(rayCloud, td, GREAT);
++
++    // ==================================================================
++    // Step 4: Gather ray path segments to master for VTK output
++    //
++    // Each ray may produce multiple segments (one per processor it
++    // traverses). Segments are stored in trackingData both at
++    // processor-boundary crossings and at particle death. We
++    // gather all segments and concatenate them per rayID.
++    // ==================================================================
+ 
+-    // Reset the ray paths list
+     if (Pstream::master())
+     {
+         rayPaths_[laserID].clear();
+-        rayPaths_[laserID].setSize(rays.size());
++        rayPaths_[laserID].setSize(nTotalRays);
+     }
+ 
+-    // Calculate the ray power tolerance as a fraction of the max ray power
+-    // Rays with a power less than this will be ignored
+-    scalar rayPowerAbsTol = 0;
+     {
+-        scalar maxRayPower = 0.0;
+-        forAll(remainingGlobalRays, rayI)
+-        {
+-            maxRayPower = max(maxRayPower, remainingGlobalRays[rayI].power_);
+-        }
+-
+-        rayPowerAbsTol = rayPowerRelTol*maxRayPower;
++        // Gather to master
++        List<labelList> allIDs(Pstream::nProcs());
++        allIDs[Pstream::myProcNo()] = finishedRayIDs;
++        Pstream::gatherList(allIDs);
+ 
+-        Info<< "Max ray power = " << maxRayPower << nl
+-            << "Ray power relative tolerance = " << rayPowerRelTol << nl
+-            << "Ray power absolute tolerance = " << rayPowerAbsTol << endl;
+-    }
++        List<List<DynamicList<point>>> allPaths(Pstream::nProcs());
++        allPaths[Pstream::myProcNo()] = finishedRayPaths;
++        Pstream::gatherList(allPaths);
+ 
+-    // Propagate the rays through the domain
+-    while (remainingGlobalRays.size() > 0)
+-    {
+-        Info<< "Number of rays in domain: "<< remainingGlobalRays.size() << endl;
+-
+-        // Find all rays on the current processor
+-        // localRays will store the remaining rays on this processor
+-        DynamicList<compactRay> localRays;
+-        forAll(remainingGlobalRays, rayI)
++        if (Pstream::master())
+         {
+-            // Take a reference to the current ray
+-            compactRay& curRay = remainingGlobalRays[rayI];
+-
+-            // Check if the ray is within the global bound box and its power is
+-            // greater than a small fraction of the laser power
+-            if 
+-            (
+-                globalBB.contains(curRay.position_)
+-             && curRay.power_ > rayPowerAbsTol
+-            )
++            for (label procI = 0; procI < Pstream::nProcs(); ++procI)
+             {
+-                const label myCellID =
+-                    findLocalCell
+-                    (
+-                        curRay.position_,
+-                        curRay.currentCell_,
+-                        mesh,
+-                        maxLocalSearch,
+-                        debug
+-                    );
+-
+-                if (myCellID != -1)
+-                {
+-                    localRays.append(curRay);
+-                }
+-            }
+-        }
++                const labelList& ids = allIDs[procI];
++                const List<DynamicList<point>>& paths = allPaths[procI];
+ 
+-        // Propagate the rays through the domain
+-        forAll(localRays, rayI)
+-        {
+-            // Take a reference to the current ray
+-            compactRay& curRay = localRays[rayI];
+-
+-            // Find the cell the ray is currently in
+-            label myCellID =
+-                findLocalCell
+-                (
+-                    curRay.position_,
+-                    curRay.currentCell_,
+-                    mesh,
+-                    maxLocalSearch,
+-                    debug
+-                );
+-
+-            while (myCellID != -1)
+-            {
+-                // Calculate the iterator distance as a fraction of the cell size
+-                const scalar iterator_distance =
+-                    (0.25/pi)*pow(VI[myCellID], 1.0/3.0);
+-
+-                    // Pout<<"iterator_distance: "<<iterator_distance<<endl;
+-
+-                // Move the ray by the iterator distance
+-                curRay.position_ += iterator_distance*curRay.direction_;
+-
+-                // Find the new cell
+-                myCellID =
+-                    findLocalCell
+-                    (
+-                        curRay.position_,
+-                        curRay.currentCell_,
+-                        mesh,
+-                        maxLocalSearch,
+-                        debug
+-                    );
+-
+-                // Update the ray's cellID
+-                curRay.currentCell_ = myCellID;
+-
+-                if (myCellID == -1)
+-                {
+-                    break;
+-                }
+-
+-                // Update the rayQ and rayNumber visualisation fields
+-                rayQ_[myCellID] += curRay.power_;
+-                rayNumber_[myCellID] = curRay.globalRayIndex_;
+-
+-                if
+-                (
+-                    mag(nFilteredI[myCellID]) > 0.5
+-                 && alphaFilteredI[myCellID] >= dep_cutoff
+-                 && curRay.power_ > SMALL
+-                )
++                forAll(ids, i)
+                 {
+-                    // Interface detected
+-                    // Deposit a fraction of the power and calculate the reflection
+-
+-                    const scalar damping_frequency =
+-                        plasma_frequency*plasma_frequency
+-                       *constant::electromagnetic::epsilon0.value()
+-                       *resistivity_in[myCellID];
+-                    //    Info<<"TEST_TESISTIVITY: "<<resistivity_in<<endl;
+-
+-                    const scalar e_r =
+-                        1.0
+-                        - (
+-                            sqr(plasma_frequency)/(sqr(angular_frequency)
+-                          + sqr(damping_frequency))
+-                        );
+-
+-                    const scalar e_i =
+-                        (damping_frequency/angular_frequency)
+-                       *(
+-                            sqr(plasma_frequency)
+-                           /(
+-                               sqr(angular_frequency) + sqr(damping_frequency)
+-                            )
+-                        );
+-
+-                    const scalar ref_index =
+-                        Foam::sqrt
+-                        (
+-                            (Foam::sqrt((e_r*e_r) +(e_i*e_i)) + e_r)/2.0
+-                        );
+-
+-                    const scalar ext_coefficient =
+-                        Foam::sqrt
+-                        (
+-                            (Foam::sqrt((e_r*e_r) +(e_i*e_i)) - e_r)/2.0
+-                        );
+-
+-                    scalar argument =
+-                        (
+-                            curRay.direction_ & nFilteredI[myCellID]
+-                        )/(mag(curRay.direction_)*mag(nFilteredI[myCellID]));
+-
+-                    if (argument >= (1.0 - SMALL))
+-                    {
+-                        argument = 1.0;
+-                    }
+-                    else if (argument <= (-1.0 + SMALL))
++                    const label rayID = ids[i];
++                    if (rayID >= 0 && rayID < rayPaths_[laserID].size())
+                     {
+-                        argument = -1.0;
+-                    }
+-
+-                   const scalar theta_in = std::acos(argument);
+-
+-
+-
+-                   const scalar pi = constant::mathematical::pi;
+-const scalar grazingAngleThreshold = 0.49 * pi; // ~86.4 degrees
+-
+-if (theta_in >= grazingAngleThreshold)
+-{
+-    // Grazing angle - deposit half energy and reflect
+-    // deposition_[myCellID] += 0.5*curRay.power_/VI[myCellID];
+-    curRay.power_ *= 0.0;
+-    
+-    // Simple reflection for grazing angles
+-    curRay.direction_ -=
+-        (
+-            (
+-                (
+-                    2.0*curRay.direction_
+-                  & nFilteredI[myCellID]
+-                )/magSqr(nFilteredI[myCellID])
+-            )
+-        )*nFilteredI[myCellID];
+-}
+-
+-else{
+-
+-
+-
+-                    const scalar alpha_laser =
+-                        Foam::sqrt
+-                        (
+-                            Foam::sqrt
+-                            (
+-                                sqr
+-                                (
+-                                    sqr(ref_index)
+-                                  - sqr(ext_coefficient)
+-                                  - sqr(Foam::sin(theta_in))
+-                                )
+-                              + (
+-                                    4.0*sqr(ref_index)*sqr(ext_coefficient)
+-                                )
+-                            )
+-                          + sqr(ref_index)
+-                          - sqr(ext_coefficient)
+-                          - sqr(Foam::sin(theta_in))/2.0
+-                        );
+-
+-                    const scalar beta_laser =
+-                        Foam::sqrt
+-                        (
+-                            (
+-                                Foam::sqrt
+-                                (
+-                                    sqr
+-                                    (
+-                                        sqr(ref_index)
+-                                      - sqr(ext_coefficient)
+-                                      - sqr(Foam::sin(theta_in))
+-                                    )
+-                                  + 4.0*sqr(ref_index)*sqr(ext_coefficient)
+-                                )
+-                              - sqr(ref_index)
+-                              + sqr(ext_coefficient)
+-                              + sqr(Foam::sin(theta_in))
+-                            )/2.0
+-                        );
+-
+-                    const scalar R_s =
+-                        (
+-                            (
+-                                sqr(alpha_laser)
+-                              + sqr(beta_laser)
+-                              - 2.0*alpha_laser*Foam::cos(theta_in)
+-                              + sqr(Foam::cos(theta_in))
+-                            )
+-                            /(
+-                                sqr(alpha_laser)
+-                              + sqr(beta_laser)
+-                              + 2.0*alpha_laser*Foam::cos(theta_in)
+-                              + sqr(Foam::cos(theta_in))
+-                            )
+-                        );
+-
+-                    const scalar R_p =
+-                        R_s
+-                        *(
++                        DynamicList<point>& existing =
++                            rayPaths_[laserID][rayID];
++                        const DynamicList<point>& segment = paths[i];
++
++                        if (existing.empty())
++                        {
++                            // First segment for this ray
++                            existing = segment;
++                        }
++                        else if (segment.size() > 0)
++                        {
++                            // Append segment, skipping the first
++                            // point if it duplicates the junction
++                            label startJ = 0;
++                            if
+                             (
+-                                sqr(alpha_laser)
+-                              + sqr(beta_laser)
+-                              - (
+-                                    2.0*alpha_laser*Foam::sin(theta_in)
+-                                   *Foam::tan(theta_in)
+-                                )
+-                              + (
+-                                    sqr(Foam::sin(theta_in))
+-                                   *sqr(Foam::tan(theta_in))
+-                                )
++                                mag(existing.last() - segment[0])
++                              < SMALL
+                             )
+-                           /(
+-                                sqr(alpha_laser)
+-                              + sqr(beta_laser)
+-                              + (
+-                                    2.0*alpha_laser*Foam::sin(theta_in)
+-                                   *Foam::tan(theta_in)
+-                                )
+-                              + sqr(Foam::sin(theta_in))*sqr(Foam::tan(theta_in))
+-                            )
+-                        );
+-
+-                    const scalar absorptivity = 1.0 - ((R_s + R_p)/2.0);
+-
+-                    // if (theta_in >= pi/2.0)
+-                    // {
+-                    //     // Dump half of energy and propogate further - once the
+-                    //     // optics is its own function we shoule work out what
+-                    //     // pi-theta returns for the absorptivity and pass this
+-                    //     // here instead of 0.5
+-                    //     deposition_[myCellID] += 0.5*curRay.power_/VI[myCellID];//yDimI[myCellID];
+-                    //     curRay.power_ *= 0.5;
+-                    // }
+-                    // else
+-                    // {
+-                        deposition_[myCellID] += absorptivity*curRay.power_/VI[myCellID];
+-                        curRay.power_ *= (1.0 - absorptivity);
+-                        curRay.direction_ -=
+-                            (
+-                                (
+-                                    (
+-                                        (
+-                                            2.0*curRay.direction_
+-                                          & nFilteredI[myCellID]
+-                                        )/magSqr(nFilteredI[myCellID])
+-                                    )
+-                                )*nFilteredI[myCellID]
+-                            );
+-                    // }
+-
++                            {
++                                startJ = 1;
++                            }
++                            for (label j = startJ; j < segment.size(); ++j)
++                            {
++                                existing.append(segment[j]);
++                            }
+                         }
+-                }
+-                else if
+-                    (
+-                        alphaFilteredI[myCellID] > dep_cutoff
+-                     && mag(nFilteredI[myCellID]) < 0.5
+-                     && curRay.power_ > SMALL
+-                    )
+-                    {
+-                    
+-                    
+-                            // Ray is in the bulk - deposit energy and reflect back
+-        if (debug)
+-        {
+-            Info<< "Within the bulk at cell " << myCellID 
+-                << ", alpha = " << alphaFilteredI[myCellID]
+-                << ", |n| = " << mag(nFilteredI[myCellID])
+-                << ", power = " << curRay.power_ << endl;
+-        }
+-        
+-
+-                        deposition_[myCellID] += 0.5*curRay.power_/VI[myCellID];;
+-                        curRay.direction_ = -curRay.direction_;
+-                        curRay.power_ *= 0.5;
+-                        curRay.path_.append(curRay.position_);
+-                        // break;
+                     }
+-                    else if
+-    (
+-        alphaFilteredI[myCellID] < dep_cutoff  // In gas/outside material
+-     && curRay.power_ > rayPowerAbsTol
+-    )
+-    {
+-    
+-    }
+-                
+-
+-                // Update the ray's path
+-                curRay.path_.append(curRay.position_);
+-            }
+-        }
+-
+-        // Sync all remaining local rays globally so remainingGlobalRays will
+-        // be the same on all processors
+-        remainingGlobalRays = localRays;
+-        Pstream::combineGather(remainingGlobalRays, combineRayLists());
+-        Pstream::broadcast(remainingGlobalRays);
+-
+-        // Record the latest ray paths
+-        // Note that once a ray has left the domain then its global path is no
+-        // longer updated so its path will be the final full path
+-        if (Pstream::master())
+-        {
+-            forAll(remainingGlobalRays, rI)
+-            {
+-                const compactRay& curRay = remainingGlobalRays[rI];
+-                const label rayID = curRay.globalRayIndex_;
+-                rayPaths_[laserID][rayID] = curRay.path_;
++                }
+             }
+         }
+     }
+ 
+     deposition_.correctBoundaryConditions();
+ 
+-     const scalar TotalQ = fvc::domainIntegrate(deposition_).value();
+-     Info<< "Total Q deposited this timestep: " << TotalQ <<endl;
++    const scalar TotalQ = fvc::domainIntegrate(deposition_).value();
++    Info<< "    Total Q deposited: " << TotalQ << endl;
+ }
+ 
+ 
+ void laserHeatSource::writeRayPathsToVTK()
+ {
+     const Time& runTime = deposition_.time();
+-    if (Pstream::master())
++    if (Pstream::master()) // Create a directory for the VTK files
+     {
+-        // Create a directory for the VTK files
+         fileName vtkDir;
+         if (Pstream::parRun())
+         {
+@@ -1174,10 +990,8 @@ void laserHeatSource::writeRayPathsToVTK()
+ 
+         mkDir(vtkDir);
+ 
+-        // Record this time as having a VTK file
+         vtkTimes_.insert(runTime.value());
+ 
+-        // Write ray paths to VTK files
+         forAll(laserNames_, laserI)
+         {
+             const fileName vtkFileName
+@@ -1185,8 +999,8 @@ void laserHeatSource::writeRayPathsToVTK()
+                 vtkDir/"rays_" + laserNames_[laserI] + "_"
+               + Foam::name(runTime.value()) + ".vtk"
+             );
+-            Info<< "Writing " << rayPaths_[laserI].size() << " ray paths to "
+-                << vtkFileName << endl;
++            Info<< "Writing " << rayPaths_[laserI].size()
++                << " ray paths to " << vtkFileName << endl;
+             writeRayPathsToVTK(rayPaths_[laserI], vtkFileName);
+         }
+     }
+@@ -1208,7 +1022,6 @@ void laserHeatSource::writeRayPathsToVTK
+             << exit(FatalError);
+     }
+ 
+-    // Calculate total number of points and lines
+     label totalPoints = 0;
+     label totalLines = 0;
+ 
+@@ -1217,18 +1030,15 @@ void laserHeatSource::writeRayPathsToVTK
+         totalPoints += rays[rayI].size();
+         if (rays[rayI].size() > 1)
+         {
+-            // n-1 line segments per ray
+             totalLines += (rays[rayI].size() - 1);
+         }
+     }
+ 
+-    // VTK header
+     file<< "# vtk DataFile Version 3.0" << nl;
+     file<< "Multiple ray data" << nl;
+     file<< "ASCII" << nl;
+     file<< "DATASET POLYDATA" << nl;
+ 
+-    // Write all points
+     file<< "POINTS " << totalPoints << " float" << nl;
+     forAll(rays, rayI)
+     {
+@@ -1240,8 +1050,6 @@ void laserHeatSource::writeRayPathsToVTK
+         }
+     }
+ 
+-    // Write line connectivity
+-    // Each line segment is defined by 2 points
+     file<< "LINES " << totalLines << " " << (totalLines * 3) << nl;
+ 
+     label pointOffset = 0;
+@@ -1249,14 +1057,12 @@ void laserHeatSource::writeRayPathsToVTK
+     {
+         const DynamicList<point>& ray = rays[rayI];
+ 
+-        // Connect consecutive points within this ray only
+         for (label i = 0; i < ray.size() - 1; i++)
+         {
+-            file<< "2 " << (pointOffset + i) << " " << (pointOffset + i + 1)
+-                << nl;
++            file<< "2 " << (pointOffset + i) << " "
++                << (pointOffset + i + 1) << nl;
+         }
+ 
+-        // Update offset for next ray
+         pointOffset += ray.size();
+     }
+ }
+@@ -1267,28 +1073,25 @@ void laserHeatSource::writeRayPathVTKSeriesFile() const
+     const Time& runTime = deposition_.time();
+     if (Pstream::master())
+     {
+-        // Directory that already holds the legacy .vtk files
+         const fileName vtkDir =
+             Pstream::parRun()
+           ? runTime.path()/".."/"VTKs"
+           : runTime.path()/"VTKs";
+ 
+-        // Get the list of times when VTK files were written
+         const scalarList times = vtkTimes_.toc();
+ 
+-        // Ensure chronological order
+         SortableList<scalar> sortedTimes(times);
+ 
+-        // Write ray paths to VTK files
+         forAll(laserNames_, laserI)
+         {
+             const word& laserName = laserNames_[laserI];
+ 
+-            const fileName seriesFile = vtkDir/"rays_" + laserName + ".vtk.series";
++            const fileName seriesFile =
++                vtkDir/"rays_" + laserName + ".vtk.series";
+             Info<< "Writing ray path series file: " << seriesFile << nl;
+ 
+             OFstream os(seriesFile);
+-            os.precision(12); // good numeric precision for times
++            os.precision(12);
+ 
+             os  << "{\n"
+                 << "  \"file-series-version\": \"1.0\",\n"
+@@ -1298,9 +1101,6 @@ void laserHeatSource::writeRayPathVTKSeriesFile() const
+             {
+                 const scalar t = sortedTimes[i];
+ 
+-                // Filenames follow your convention:
+-                //   rays_<laserName>_<timeName>.vtk
+-                // We reconstruct <timeName> with Foam::name(t).
+                 os  << "    { \"name\": \"rays_"
+                     << laserName << "_" << Foam::name(t)
+                     << ".vtk\", \"time\": " << t << " }";
+diff --git a/src/laserHeatSource/laserHeatSource.H b/src/laserHeatSource/laserHeatSource.H
+index ce6757aa..66b9004c 100644
+--- a/src/laserHeatSource/laserHeatSource.H
++++ b/src/laserHeatSource/laserHeatSource.H
+@@ -1,19 +1,19 @@
+ /*---------------------------------------------------------------------------*\
+ License
+-    This file is part of solids4foam.
++    This file is part of laserbeamFoam.
+ 
+-    solids4foam is free software: you can redistribute it and/or modify it
++    laserbeamFoam is free software: you can redistribute it and/or modify it
+     under the terms of the GNU General Public License as published by the
+     Free Software Foundation, either version 3 of the License, or (at your
+     option) any later version.
+ 
+-    solids4foam is distributed in the hope that it will be useful, but
++    laserbeamFoam is distributed in the hope that it will be useful, but
+     WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+     General Public License for more details.
+ 
+     You should have received a copy of the GNU General Public License
+-    along with solids4foam.  If not, see <http://www.gnu.org/licenses/>.
++    along with laserbeamFoam.  If not, see <http://www.gnu.org/licenses/>.
+ 
+ Class
+     laserHeatSource
+@@ -21,6 +21,10 @@ Class
+ Description
+     Calculate the deposition heat source field from a laser using ray-tracing.
+ 
++    Uses OpenFOAM's Lagrangian particle tracking infrastructure for exact
++    cell-to-cell ray propagation with automatic parallel processor-boundary
++    transfer.
++
+     Laser parameters are defined via the provided dictionary.
+ 
+     It is assumed that the laser enters the domain at the boundary with an
+@@ -29,7 +33,7 @@ Description
+     Laser rays are written as VTKs for visualisation.
+ 
+ Author
+-    Thomas Flint, The University of Manchester.
++    Tom Flint, The University of Manchester.
+     Philip Cardiff, University College Dublin.
+ 
+ SourceFiles
+@@ -44,7 +48,8 @@ SourceFiles
+ #include "dictionary.H"
+ #include "interpolationTable.H"
+ #include "OFstream.H"
+-#include "compactRay.H"
++#include "Cloud.H"
++#include "laserRayParticle.H"
+ 
+ // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+ 
+@@ -82,13 +87,9 @@ class laserHeatSource
+         volScalarField yDim_;
+ 
+         //- Powder sim flag
+-        //  Needed for cases with spherical particles or spurious currents will
+-        //  smear out the particle interface un-physically
+         const Switch powderSim_;
+ 
+         //- New laser discretisation flag
+-        //  Tell the heat source if you want to discretise the traditional
+-        //  laserbeamfoam way or in radial and polar coordinates
+         const Switch radialPolarHeatSource_;
+ 
+         //- List of the laser names
+@@ -115,14 +116,14 @@ class laserHeatSource
+ 
+     // Private Member Functions
+ 
+-        //- Create the initial rays
+-        //  This involves creating a list of points (starting position of the
+-        //  laser rays) and their associated power (J/s)
+-        //  The rays list should be the same on all
+-        //  processors when returned from this function
+-        void createInitialRays
++        //- Seed the ray cloud with initial ray particles.
++        //  Creates laserRayParticle objects and adds them to the cloud.
++        //  Only creates particles on the processor that owns the starting
++        //  cell. Returns the total number of rays across all processors
++        //  via nTotalRays.
++        void seedRayCloud
+         (
+-            List<compactRay>& rays,
++            Cloud<laserRayParticle>& cloud,
+             const fvMesh& mesh,
+             const vector& currentLaserPosition,
+             const scalar laserRadius,
+@@ -132,7 +133,8 @@ class laserHeatSource
+             const vector& V_incident,
+             const scalar Radius_Flavour,
+             const scalar Q_cond,
+-            const scalar beam_radius
++            const scalar beam_radius,
++            label& nTotalRays
+         ) const;
+ 
+         //- Disallow default bitwise copy construct
+@@ -149,10 +151,7 @@ public:
+     // Constructors
+ 
+         //- Construct from the mesh
+-        laserHeatSource
+-        (
+-            const fvMesh& mesh
+-        );
++        laserHeatSource(const fvMesh& mesh);
+ 
+     // Destructor
+ 
+@@ -187,12 +186,9 @@ public:
+         }
+ 
+         //- Update the deposition field for all lasers
+-        //  The filtered volume frame field (alphaFiltered) and the filtered
+-        //  interface normal field are required to define the interface
+-        //  The electrical resistivity field is passed as an argument, allowing
+-        //  a general laser heat source for multi-component and temperature
+-        //  dependent resistivity solvers
+-        //  This resets the deposition field to zero before updating it
++        //  The function takes three arguments
++        //  The filtered volume of metal field  (alphaFiltered), the normal
++        //  vector field nFiltered and the scalar resistivity field
+         void updateDeposition
+         (
+             const volScalarField& alphaFiltered,
+@@ -201,8 +197,6 @@ public:
+         );
+ 
+         //- Update the deposition for the given laser parameters
+-        //  This adds to the existing deposition field and does not reset it to
+-        //  zero first
+         void updateDeposition
+         (
+             const volScalarField& alphaFiltered,
+@@ -223,7 +217,7 @@ public:
+             const Switch useLocalSearch,
+             const label maxLocalSearch,
+             const scalar rayPowerRelTol,
+-            const boundBox& globalBB  // FOR ACCESS TO BOUNDING BOX GLOBALLY
++            const boundBox& globalBB
+         );
+ 
+         //- Const access to the global bounding box
+@@ -242,9 +236,7 @@ public:
+         //- Write rayPath_ to a VTK file with the given name
+         void writeRayPathsToVTK();
+ 
+-        //- Write a "vtk.series" file with details about the VTK files written
+-        //  so far. This file can be conveniently opened in ParaView and will
+-        //  load the rays at the correct physical times
++        //- Write a "vtk.series" file
+         void writeRayPathVTKSeriesFile() const;
+ };
+ 
+diff --git a/src/laserHeatSource/laserRayParticle.C b/src/laserHeatSource/laserRayParticle.C
+new file mode 100644
+index 00000000..f8d68739
+--- /dev/null
++++ b/src/laserHeatSource/laserRayParticle.C
+@@ -0,0 +1,582 @@
++/*---------------------------------------------------------------------------*\
++License
++    This file is part of laserbeamFoam.
++
++    laserbeamFoam is free software: you can redistribute it and/or modify it
++    under the terms of the GNU General Public License as published by the
++    Free Software Foundation, either version 3 of the License, or (at your
++    option) any later version.
++
++    laserbeamFoam is distributed in the hope that it will be useful, but
++    WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++    General Public License for more details.
++
++    You should have received a copy of the GNU General Public License
++    along with laserbeamFoam.  If not, see <http://www.gnu.org/licenses/>.
++
++\*---------------------------------------------------------------------------*/
++
++#include "laserRayParticle.H"
++#include "constants.H"
++#include "IOstreams.H"
++
++// * * * * * * * * * * * * * * Static Data Members * * * * * * * * * * * * * //
++
++namespace Foam
++{
++    defineTypeNameAndDebug(laserRayParticle, 0);
++
++    defineTemplateTypeNameAndDebugWithName
++    (
++        Cloud<laserRayParticle>,
++        "laserRayParticleCloud",
++        0
++    );
++}
++
++
++// * * * * * * * * * * * * * * * Constructors  * * * * * * * * * * * * * * * //
++
++Foam::laserRayParticle::laserRayParticle
++(
++    const polyMesh& mesh,
++    const vector& position,
++    const label cellI,
++    const vector& direction,
++    const scalar power,
++    const scalar dA,
++    const label globalRayIndex
++)
++:
++    particle(mesh, position, cellI),
++    direction_(direction / (mag(direction) + VSMALL)),
++    power_(power),
++    initialPower_(power),
++    dA_(dA),
++    bounceCount_(0),
++    globalRayIndex_(globalRayIndex),
++    active_(true),
++    path_()
++{
++    path_.append(position);
++}
++
++
++Foam::laserRayParticle::laserRayParticle
++(
++    const polyMesh& mesh,
++    Istream& is,
++    bool readFields,
++    bool newFormat
++)
++:
++    particle(mesh, is, readFields, newFormat),
++    direction_(vector::zero),
++    power_(0),
++    initialPower_(0),
++    dA_(0),
++    bounceCount_(0),
++    globalRayIndex_(-1),
++    active_(true),
++    path_()
++{
++    if (readFields)
++    {
++        is  >> direction_
++            >> power_
++            >> initialPower_
++            >> dA_
++            >> bounceCount_
++            >> globalRayIndex_
++            >> active_;
++    }
++
++    is.check(FUNCTION_NAME);
++}
++
++
++// * * * * * * * * * * * * * * * Member Functions  * * * * * * * * * * * * * //
++
++bool Foam::laserRayParticle::move
++(
++    Cloud<laserRayParticle>& cloud,
++    trackingData& td,
++    const scalar trackTime
++)
++{
++    // Reference to the mesh
++    const polyMesh& mesh = this->mesh();
++    const scalarField& VI = mesh.cellVolumes();
++
++    // References from tracking data
++    const scalarField& alphaI = td.alphaFiltered_;
++    const vectorField& nI = td.nFiltered_;
++
++    // ================================================================
++    // Main ray-tracing loop:
++    //   - Physics check on current cell FIRST (interface/bulk)
++    //   - Then track to the next face
++    //   - Large displacement (mesh.bounds().mag()) so stepFraction
++    //     advances slowly and the ray can cross many cells
++    //   - After reflection, reset stepFraction to 0 so the new
++    //     direction gets a fresh journey
++    // ================================================================
++
++    td.keepParticle = true;
++    td.switchProcessor = false;
++
++    // Ensure we have a start point. For newly created particles,
++    // the constructor already appends the start position. For
++    // particles arriving from another processor (deserialized via
++    // Istream), path_ is empty — record the transfer position.
++    if (path_.empty())
++    {
++        path_.append(position());
++    }
++
++    const scalar maxTrackLength = mesh.bounds().mag();
++
++    while (td.keepParticle && !td.switchProcessor && active_)
++    {
++        const label cellI = cell();
++
++        // Safety check
++        if (cellI < 0 || cellI >= mesh.nCells())
++        {
++            active_ = false;
++            td.keepParticle = false;
++            break;
++        }
++
++        // Update visualisation fields
++        td.rayQ_[cellI] += power_;
++        td.rayNumber_[cellI] = globalRayIndex_;
++
++        // Check if power is exhausted
++        if (power_ < td.rayPowerAbsTol_ || power_ < SMALL)
++        {
++            path_.append(position());
++            td.finishedRayIDs_.append(globalRayIndex_);
++            td.finishedRayPaths_.append(path_);
++            active_ = false;
++            td.keepParticle = false;
++            break;
++        }
++
++        // ---- Physics: check for interface or bulk metal ----
++
++        if
++        (
++            mag(nI[cellI]) > 0.5
++         && alphaI[cellI] >= td.depCutoff_
++        )
++        {
++            // ================================================
++            // Interface cell - Fresnel reflection/absorption
++            // ================================================
++
++            const scalar absorptivity = computeFresnelAbsorptivity
++            (
++                direction_,
++                nI[cellI],
++                td.plasmaFrequency_,
++                td.angularFrequency_,
++                td.resistivity_[cellI]
++            );
++
++            // Deposit absorbed fraction
++            td.deposition_[cellI] += absorptivity * power_ / VI[cellI];
++
++            // Reduce ray power
++            power_ *= (1.0 - absorptivity);
++
++            // Specular reflection about the interface normal
++            vector n = nI[cellI];
++            n /= mag(n);
++
++            // Ensure normal points into the incident medium
++            if ((direction_ & n) > 0)
++            {
++                n = -n;
++            }
++
++            direction_ = direction_ - 2.0*(direction_ & n)*n;
++            direction_ /= mag(direction_) + VSMALL;
++
++            bounceCount_++;
++            path_.append(position());
++
++            // If power is now below tolerance, kill the ray
++            if (power_ < td.rayPowerAbsTol_)
++            {
++                td.finishedRayIDs_.append(globalRayIndex_);
++                td.finishedRayPaths_.append(path_);
++                active_ = false;
++                td.keepParticle = false;
++                break;
++            }
++        }
++        else if (alphaI[cellI] >= td.depCutoff_)
++        {
++            // ================================================
++            // Bulk metal - full absorption, ray dies
++            // ================================================
++
++            td.deposition_[cellI] += power_ / VI[cellI];
++            power_ = 0.0;
++            path_.append(position());
++            td.finishedRayIDs_.append(globalRayIndex_);
++            td.finishedRayPaths_.append(path_);
++            active_ = false;
++            td.keepParticle = false;
++            break;
++        }
++
++        // ---- Track to the next face ----
++
++        // Reset stepFraction before each tracking call. We are NOT
++        // doing time-based tracking (rays are instantaneous), so
++        // stepFraction should not accumulate across cell crossings.
++        // Without this reset, stepFraction eventually reaches 1.0
++        // and trackToAndHitFace stops advancing the particle, causing
++        // an infinite loop that deadlocks parallel runs.
++        stepFraction() = 0;
++        const scalar f = 1.0;
++        const vector displacement = direction_*maxTrackLength;
++
++        trackToAndHitFace(displacement, f, cloud, td);
++    }
++
++    return td.keepParticle;
++}
++
++
++bool Foam::laserRayParticle::hitPatch
++(
++    Cloud<laserRayParticle>& cloud,
++    trackingData& td
++)
++{
++    // Return false: not handled here, proceed to specific patch handler
++    // (hitProcessorPatch, hitWallPatch, etc.)
++    return false;
++}
++
++
++void Foam::laserRayParticle::hitProcessorPatch
++(
++    Cloud<laserRayParticle>& cloud,
++    trackingData& td
++)
++{
++    // Store the path segment accumulated so far BEFORE the particle
++    // is serialized and transferred (path_ is not serialized, so it
++    // would be lost). Append current position as the end of this segment.
++    path_.append(position());
++    td.finishedRayIDs_.append(globalRayIndex_);
++    td.finishedRayPaths_.append(path_);
++
++    // The Cloud infrastructure will automatically transfer this
++    // particle to the neighbouring processor. We just need to flag
++    // the switch.
++    td.switchProcessor = true;
++}
++
++
++void Foam::laserRayParticle::hitWallPatch
++(
++    Cloud<laserRayParticle>& cloud,
++    trackingData& td
++)
++{
++    // Wall boundary - absorb remaining power into the boundary cell
++    // (or simply kill the ray if the wall is outside the material)
++    const label cellI = cell();
++
++    if (cellI >= 0 && power_ > SMALL)
++    {
++        const scalarField& VI = this->mesh().cellVolumes();
++        td.deposition_[cellI] += power_ / VI[cellI];
++        power_ = 0.0;
++    }
++
++    path_.append(position());
++    td.finishedRayIDs_.append(globalRayIndex_);
++    td.finishedRayPaths_.append(path_);
++    active_ = false;
++    td.keepParticle = false;
++}
++
++
++Foam::scalar Foam::laserRayParticle::computeFresnelAbsorptivity
++(
++    const vector& rayDirection,
++    const vector& surfaceNormal,
++    const scalar plasmaFrequency,
++    const scalar angularFrequency,
++    const scalar resistivity
++)
++{
++    const scalar damping_frequency =
++        plasmaFrequency*plasmaFrequency
++       *constant::electromagnetic::epsilon0.value()
++       *resistivity;
++
++    const scalar e_r =
++        1.0
++      - (
++            sqr(plasmaFrequency)
++           /(sqr(angularFrequency) + sqr(damping_frequency))
++        );
++
++    const scalar e_i =
++        (damping_frequency/angularFrequency)
++       *(
++            sqr(plasmaFrequency)
++           /(sqr(angularFrequency) + sqr(damping_frequency))
++        );
++
++    const scalar ref_index =
++        Foam::sqrt((Foam::sqrt(e_r*e_r + e_i*e_i) + e_r)/2.0);
++
++    const scalar ext_coefficient =
++        Foam::sqrt((Foam::sqrt(e_r*e_r + e_i*e_i) - e_r)/2.0);
++
++    // Unit surface normal
++    vector n = surfaceNormal;
++    n /= mag(n);
++
++    // Unit ray direction
++    vector d = rayDirection;
++    const scalar dMag = mag(d);
++    if (dMag <= SMALL)
++    {
++        return 1.0;
++    }
++    d /= dMag;
++
++    const vector kin = -d;
++    scalar cosTheta = kin & n;
++
++    if (cosTheta < 0.0)
++    {
++        n = -n;
++        cosTheta = -cosTheta;
++    }
++
++    cosTheta = Foam::max(Foam::min(cosTheta, scalar(1.0)), scalar(0.0));
++    const scalar theta_in = std::acos(cosTheta);
++    const scalar sinTheta = Foam::sin(theta_in);
++    const scalar cosTheta_in = Foam::cos(theta_in);
++
++    const scalar alpha_laser = Foam::sqrt
++    (
++        Foam::sqrt
++        (
++            sqr(sqr(ref_index) - sqr(ext_coefficient) - sqr(sinTheta))
++          + 4.0*sqr(ref_index)*sqr(ext_coefficient)
++        )
++      + sqr(ref_index)
++      - sqr(ext_coefficient)
++      - sqr(sinTheta)/2.0
++    );
++
++    const scalar beta_laser = Foam::sqrt
++    (
++        (
++            Foam::sqrt
++            (
++                sqr(sqr(ref_index) - sqr(ext_coefficient) - sqr(sinTheta))
++              + 4.0*sqr(ref_index)*sqr(ext_coefficient)
++            )
++          - sqr(ref_index)
++          + sqr(ext_coefficient)
++          + sqr(sinTheta)
++        )/2.0
++    );
++
++    scalar R_s =
++        (
++            sqr(alpha_laser) + sqr(beta_laser)
++          - 2.0*alpha_laser*cosTheta_in + sqr(cosTheta_in)
++        )
++       /(
++            sqr(alpha_laser) + sqr(beta_laser)
++          + 2.0*alpha_laser*cosTheta_in + sqr(cosTheta_in)
++        );
++
++    scalar R_p =
++        R_s
++       *(
++            sqr(alpha_laser) + sqr(beta_laser)
++          - 2.0*alpha_laser*sinTheta*Foam::tan(theta_in)
++          + sqr(sinTheta)*sqr(Foam::tan(theta_in))
++        )
++       /(
++            sqr(alpha_laser) + sqr(beta_laser)
++          + 2.0*alpha_laser*sinTheta*Foam::tan(theta_in)
++          + sqr(sinTheta)*sqr(Foam::tan(theta_in))
++        );
++
++    R_s = Foam::max(Foam::min(R_s, scalar(1.0)), scalar(0.0));
++    R_p = Foam::max(Foam::min(R_p, scalar(1.0)), scalar(0.0));
++
++    const scalar R = 0.5*(R_s + R_p);
++    scalar absorptivity = 1.0 - R;
++
++    return Foam::max(Foam::min(absorptivity, scalar(1.0)), scalar(0.0));
++}
++
++
++// * * * * * * * * * * * * * * * Read/Write  * * * * * * * * * * * * * * * * //
++
++void Foam::laserRayParticle::readFields
++(
++    Cloud<laserRayParticle>& cloud
++)
++{
++    bool valid = cloud.size();
++
++    particle::readFields(cloud);
++
++    IOField<vector> direction
++    (
++        cloud.newIOobject("direction", IOobject::MUST_READ),
++        valid
++    );
++    cloud.checkFieldIOobject(cloud, direction);
++
++    IOField<scalar> power
++    (
++        cloud.newIOobject("power", IOobject::MUST_READ),
++        valid
++    );
++    cloud.checkFieldIOobject(cloud, power);
++
++    IOField<scalar> initialPower
++    (
++        cloud.newIOobject("initialPower", IOobject::MUST_READ),
++        valid
++    );
++    cloud.checkFieldIOobject(cloud, initialPower);
++
++    IOField<scalar> dA
++    (
++        cloud.newIOobject("dA", IOobject::MUST_READ),
++        valid
++    );
++    cloud.checkFieldIOobject(cloud, dA);
++
++    IOField<label> bounceCount
++    (
++        cloud.newIOobject("bounceCount", IOobject::MUST_READ),
++        valid
++    );
++    cloud.checkFieldIOobject(cloud, bounceCount);
++
++    IOField<label> globalRayIndex
++    (
++        cloud.newIOobject("globalRayIndex", IOobject::MUST_READ),
++        valid
++    );
++    cloud.checkFieldIOobject(cloud, globalRayIndex);
++
++    label i = 0;
++    for (laserRayParticle& p : cloud)
++    {
++        p.direction_ = direction[i];
++        p.power_ = power[i];
++        p.initialPower_ = initialPower[i];
++        p.dA_ = dA[i];
++        p.bounceCount_ = bounceCount[i];
++        p.globalRayIndex_ = globalRayIndex[i];
++        ++i;
++    }
++}
++
++
++void Foam::laserRayParticle::writeFields
++(
++    const Cloud<laserRayParticle>& cloud
++)
++{
++    particle::writeFields(cloud);
++
++    const label np = cloud.size();
++
++    IOField<vector> direction
++    (
++        cloud.newIOobject("direction", IOobject::NO_READ),
++        np
++    );
++    IOField<scalar> power
++    (
++        cloud.newIOobject("power", IOobject::NO_READ),
++        np
++    );
++    IOField<scalar> initialPower
++    (
++        cloud.newIOobject("initialPower", IOobject::NO_READ),
++        np
++    );
++    IOField<scalar> dA
++    (
++        cloud.newIOobject("dA", IOobject::NO_READ),
++        np
++    );
++    IOField<label> bounceCount
++    (
++        cloud.newIOobject("bounceCount", IOobject::NO_READ),
++        np
++    );
++    IOField<label> globalRayIndex
++    (
++        cloud.newIOobject("globalRayIndex", IOobject::NO_READ),
++        np
++    );
++
++    label i = 0;
++    for (const laserRayParticle& p : cloud)
++    {
++        direction[i] = p.direction_;
++        power[i] = p.power_;
++        initialPower[i] = p.initialPower_;
++        dA[i] = p.dA_;
++        bounceCount[i] = p.bounceCount_;
++        globalRayIndex[i] = p.globalRayIndex_;
++        ++i;
++    }
++
++    direction.write(np > 0);
++    power.write(np > 0);
++    initialPower.write(np > 0);
++    dA.write(np > 0);
++    bounceCount.write(np > 0);
++    globalRayIndex.write(np > 0);
++}
++
++
++// * * * * * * * * * * * * * * * IOstream Operators  * * * * * * * * * * * * //
++
++Foam::Ostream& Foam::operator<<
++(
++    Ostream& os,
++    const laserRayParticle& p
++)
++{
++    os  << static_cast<const particle&>(p)
++        << token::SPACE << p.direction_
++        << token::SPACE << p.power_
++        << token::SPACE << p.initialPower_
++        << token::SPACE << p.dA_
++        << token::SPACE << p.bounceCount_
++        << token::SPACE << p.globalRayIndex_
++        << token::SPACE << p.active_;
++
++    os.check(FUNCTION_NAME);
++    return os;
++}
++
++
++// ************************************************************************* //
+diff --git a/src/laserHeatSource/laserRayParticle.H b/src/laserHeatSource/laserRayParticle.H
+new file mode 100644
+index 00000000..784dc744
+--- /dev/null
++++ b/src/laserHeatSource/laserRayParticle.H
+@@ -0,0 +1,306 @@
++/*---------------------------------------------------------------------------*\
++License
++    This file is part of laserbeamFoam.
++
++    laserbeamFoam is free software: you can redistribute it and/or modify it
++    under the terms of the GNU General Public License as published by the
++    Free Software Foundation, either version 3 of the License, or (at your
++    option) any later version.
++
++    laserbeamFoam is distributed in the hope that it will be useful, but
++    WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++    General Public License for more details.
++
++    You should have received a copy of the GNU General Public License
++    along with laserbeamFoam.  If not, see <http://www.gnu.org/licenses/>.
++
++Class
++    Foam::laserRayParticle
++
++Description
++    Lagrangian particle representing a single laser ray for use in a
++    Discrete Transfer Radiation Method (DTRM) style ray-tracing algorithm.
++
++    Each particle carries a ray direction, power, and area element.
++    The particle uses OpenFOAM's built-in particle tracking to traverse
++    cells exactly (face-to-face), with automatic parallel transfer at
++    processor boundaries handled by the Cloud infrastructure.
++
++    Inspired by OpenFOAM's DTRMParticle used in the laserDTRM radiation
++    model.
++
++Author
++    Tom Flint, The University of Manchester.
++    Philip Cardiff, University College Dublin.
++
++SourceFiles
++    laserRayParticle.C
++
++\*---------------------------------------------------------------------------*/
++
++#ifndef laserRayParticle_H
++#define laserRayParticle_H
++
++#include "particle.H"
++#include "Cloud.H"
++#include "volFields.H"
++#include "DynamicList.H"
++#include "IOstream.H"
++
++// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
++
++namespace Foam
++{
++
++// Forward declaration
++class laserRayParticle;
++
++// Cloud typedef
++typedef Cloud<laserRayParticle> laserRayParticleCloud;
++
++// Friend operators
++Ostream& operator<<(Ostream&, const laserRayParticle&);
++
++
++/*---------------------------------------------------------------------------*\
++                      Class laserRayParticle Declaration
++\*---------------------------------------------------------------------------*/
++
++class laserRayParticle
++:
++    public particle
++{
++
++public:
++
++    // Public data carried by the ray
++
++        //- Current ray direction (unit vector)
++        vector direction_;
++
++        //- Current ray power [W]
++        scalar power_;
++
++        //- Initial ray power [W] (for tolerance checks)
++        scalar initialPower_;
++
++        //- Area element associated with this ray [m^2]
++        scalar dA_;
++
++        //- Number of reflections
++        label bounceCount_;
++
++        //- Global ray index (for VTK output ordering)
++        label globalRayIndex_;
++
++        //- Is the ray still active?
++        bool active_;
++
++        //- Accumulated path points for VTK visualisation
++        DynamicList<point> path_;
++
++
++    //- Class used to pass tracking data to the trackToFace function
++    class trackingData
++    :
++        public particle::trackingData
++    {
++    public:
++
++        // References to fields needed during tracking
++
++            //- Filtered volume fraction field
++            const volScalarField& alphaFiltered_;
++
++            //- Filtered interface normal field
++            const volVectorField& nFiltered_;
++
++            //- Electrical resistivity field
++            const volScalarField& resistivity_;
++
++            //- Reference to the deposition field (accumulated into)
++            volScalarField& deposition_;
++
++            //- Reference to the ray power visualisation field
++            volScalarField& rayQ_;
++
++            //- Reference to the ray number visualisation field
++            volScalarField& rayNumber_;
++
++            //- Deposition alpha cutoff
++            scalar depCutoff_;
++
++            //- Plasma frequency [rad/s]
++            scalar plasmaFrequency_;
++
++            //- Angular frequency of laser light [rad/s]
++            scalar angularFrequency_;
++
++            //- Ray power absolute tolerance [W]
++            scalar rayPowerAbsTol_;
++
++            //- Collected ray paths from finished particles
++            //  (particles store their paths here before dying,
++            //   since dead particles are removed from the cloud)
++            DynamicList<label>& finishedRayIDs_;
++            DynamicList<DynamicList<point>>& finishedRayPaths_;
++
++
++        // Constructor
++        trackingData
++        (
++            const Cloud<laserRayParticle>& cloud,
++            const volScalarField& alphaFiltered,
++            const volVectorField& nFiltered,
++            const volScalarField& resistivity,
++            volScalarField& deposition,
++            volScalarField& rayQ,
++            volScalarField& rayNumber,
++            const scalar depCutoff,
++            const scalar plasmaFrequency,
++            const scalar angularFrequency,
++            const scalar rayPowerAbsTol,
++            DynamicList<label>& finishedRayIDs,
++            DynamicList<DynamicList<point>>& finishedRayPaths
++        )
++        :
++            particle::trackingData(cloud),
++            alphaFiltered_(alphaFiltered),
++            nFiltered_(nFiltered),
++            resistivity_(resistivity),
++            deposition_(deposition),
++            rayQ_(rayQ),
++            rayNumber_(rayNumber),
++            depCutoff_(depCutoff),
++            plasmaFrequency_(plasmaFrequency),
++            angularFrequency_(angularFrequency),
++            rayPowerAbsTol_(rayPowerAbsTol),
++            finishedRayIDs_(finishedRayIDs),
++            finishedRayPaths_(finishedRayPaths)
++        {}
++    };
++
++
++    // Static data members
++
++        //- Runtime type information
++        TypeName("laserRayParticle");
++
++
++    // Constructors
++
++        //- Construct from components
++        laserRayParticle
++        (
++            const polyMesh& mesh,
++            const vector& position,
++            const label cellI,
++            const vector& direction,
++            const scalar power,
++            const scalar dA,
++            const label globalRayIndex
++        );
++
++        //- Construct from Istream
++        laserRayParticle
++        (
++            const polyMesh& mesh,
++            Istream& is,
++            bool readFields = true,
++            bool newFormat = true
++        );
++
++        //- Construct and return a clone
++        autoPtr<particle> clone() const
++        {
++            return autoPtr<particle>(new laserRayParticle(*this));
++        }
++
++        //- Factory class to read-construct particles used for
++        //  parallel transfer
++        class iNew
++        {
++            const polyMesh& mesh_;
++
++        public:
++
++            iNew(const polyMesh& mesh)
++            :
++                mesh_(mesh)
++            {}
++
++            autoPtr<laserRayParticle> operator()(Istream& is) const
++            {
++                return autoPtr<laserRayParticle>
++                (
++                    new laserRayParticle(mesh_, is, true)
++                );
++            }
++        };
++
++
++    //- Destructor
++    virtual ~laserRayParticle() = default;
++
++
++    // Member Functions
++
++        //- Move the particle (called by Cloud::move)
++        //  This is the main ray-tracing logic: track face-to-face,
++        //  check for interfaces, deposit energy, reflect.
++        bool move(Cloud<laserRayParticle>& cloud, trackingData& td, const scalar trackTime);
++
++        //- Overridable function to handle the particle hitting a patch
++        //  Return true if handled (skip specific patch handler), false
++        //  to continue to hitProcessorPatch/hitWallPatch etc.
++        bool hitPatch(Cloud<laserRayParticle>& cloud, trackingData& td);
++
++        //- Hit a processor patch - transfer to the neighbour processor
++        void hitProcessorPatch
++        (
++            Cloud<laserRayParticle>& cloud,
++            trackingData& td
++        );
++
++        //- Hit a wall patch - absorb remaining power
++        void hitWallPatch
++        (
++            Cloud<laserRayParticle>& cloud,
++            trackingData& td
++        );
++
++        //- Compute Fresnel absorptivity at an interface
++        static scalar computeFresnelAbsorptivity
++        (
++            const vector& rayDirection,
++            const vector& surfaceNormal,
++            const scalar plasmaFrequency,
++            const scalar angularFrequency,
++            const scalar resistivity
++        );
++
++        //- Read/write fields for parallel transfer
++        static void readFields(Cloud<laserRayParticle>& cloud);
++        static void writeFields(const Cloud<laserRayParticle>& cloud);
++
++
++    // Ostream operator
++
++        friend Ostream& operator<<
++        (
++            Ostream& os,
++            const laserRayParticle& p
++        );
++};
++
++
++// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
++
++} // End namespace Foam
++
++// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
++
++#endif
++
++// ************************************************************************* //
