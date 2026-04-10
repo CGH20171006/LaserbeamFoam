@@ -21,6 +21,10 @@ archive_debug/
 *.log
 log.*
 
+# Case directories (local working data)
+316L/
+Ti6Al4V/
+
 # Large CSVs (Intermediate results)
 cross_sections_statistics.csv
 row_statistics.csv
