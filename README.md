@@ -60,7 +60,7 @@ The `OpenFoam_com_main` branch compiles with openfoam v2506, while the `Openfoam
  library:
 
 ```bash
-https://github.com/laserbeamfoam/LaserbeamFoam.git
+git clone https://github.com/laserbeamfoam/LaserbeamFoam.git
 cd LaserbeamFoam && ./Allwmake -j
 ```
 
