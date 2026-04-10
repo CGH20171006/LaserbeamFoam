@@ -1,0 +1,11 @@
+{
+  "method": "Bayesian",
+  "best_params": [
+    3.0,
+    -0.0015,
+    2.0
+  ],
+  "best_cost": 6.1654993157085185,
+  "n_evaluations": 49,
+  "message": "贝叶斯优化完成，共 49 次评估"
+}
